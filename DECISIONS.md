@@ -38,3 +38,23 @@ The e2e setup refuses to run unless the database name ends in `_test`, because i
 ## 2026-09-30 — PostgreSQL 16 in Docker, host port 5433
 
 The schema needs PostgreSQL 15+. 16 is supported by every hosting option we listed. Host port 5433 avoids clashing with other local PostgreSQL instances on 5432.
+
+## 2026-09-30 — `steps.done_at TIMESTAMPTZ` instead of `steps.done BOOLEAN`
+
+A step is done when `done_at IS NOT NULL`. The progress page shows "steps completed per day" (YOU-24), and a boolean cannot say on which day a step was finished. Marking a step as not done sets `done_at` back to `NULL`.
+
+## 2026-09-30 — The database follows schema v1
+
+`SCHEMA.md` is schema v1 with the one change above. `backend/migrations/0001_initial.sql` implements it exactly.
+
+The Linear issues were written for a later draft (v1.3) that is not in the repo. Where an issue needs something v1 does not have, we add a **new migration at that step** and update `SCHEMA.md` with it. We do not edit `0001_initial.sql`.
+
+| The issue expects | Schema v1 has | First needed in |
+|---|---|---|
+| `users.timezone` | no timezone column | YOU-13 (register), YOU-24 (progress per local day) |
+| A way to archive a goal | no archive column | YOU-18 |
+| Deleting a goal/task/step with sessions is refused (409) | `ON DELETE CASCADE` deletes the sessions too | YOU-18, YOU-19, YOU-20 |
+| Task status derived from its steps | a stored `tasks.status` column | YOU-19, YOU-20 |
+| Deferrable unique step position | a plain `UNIQUE (task_id, position)` | YOU-21 (reorder) |
+| Composite foreign keys for ownership | single-column foreign keys | No issue depends on it. Services check that the parent belongs to the user before inserting (YOU-19). |
+| Review fields only on an ended session | no such check | YOU-23 |
