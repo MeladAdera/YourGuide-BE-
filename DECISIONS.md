@@ -51,7 +51,7 @@ The Linear issues were written for a later draft (v1.3) that is not in the repo.
 
 | The issue expects | Schema v1 has | First needed in |
 |---|---|---|
-| `users.timezone` | no timezone column | YOU-13 (register), YOU-24 (progress per local day) |
+| `users.timezone` | no timezone column | YOU-13 (register), YOU-24 (progress per local day). **Added in `0002_add-user-timezone.sql`.** |
 | A way to archive a goal | no archive column | YOU-18 |
 | Deleting a goal/task/step with sessions is refused (409) | `ON DELETE CASCADE` deletes the sessions too | YOU-18, YOU-19, YOU-20 |
 | Task status derived from its steps | a stored `tasks.status` column | YOU-19, YOU-20 |

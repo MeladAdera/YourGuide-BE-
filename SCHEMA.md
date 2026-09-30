@@ -2,7 +2,9 @@
 
 > **Change from the first draft:** `steps.done BOOLEAN` became `steps.done_at TIMESTAMPTZ` (section 8 and section 14). The reason is in `DECISIONS.md`.
 >
-> **Migration:** `backend/migrations/0001_initial.sql` implements this document. The two must always match.
+> **Added later:** `users.timezone` (section 3.1), in migration `0002_add-user-timezone.sql`.
+>
+> **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
 
@@ -63,6 +65,8 @@ CREATE TABLE users (
 
   password_hash TEXT NOT NULL,
 
+  timezone TEXT NOT NULL,
+
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -79,6 +83,19 @@ The system needs to know who the user is and authenticate them.
 -   Email is required.
 -   Email is unique case-insensitively.
 -   Store a password hash, never the raw password.
+-   Timezone is required. It is an IANA name such as `Asia/Dubai`.
+
+### Why `timezone`?
+
+Progress is shown per day, and "day" must mean the user's day.
+
+```text
+A session at 01:30 on Tuesday in Dubai
+is 21:30 on Monday in UTC.
+```
+
+Without the timezone, that session would be counted on the wrong day.
+The API checks that the name is a real timezone before saving it.
 
 ------------------------------------------------------------------------
 

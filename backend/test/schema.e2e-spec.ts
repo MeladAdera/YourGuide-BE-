@@ -28,8 +28,8 @@ describe('Database schema', () => {
 
   function insertUser(email = 'user@example.com'): Promise<string> {
     return insertReturningId(
-      'INSERT INTO users (email, password_hash) VALUES ($1, $2)',
-      [email, 'hash'],
+      'INSERT INTO users (email, password_hash, timezone) VALUES ($1, $2, $3)',
+      [email, 'hash', 'UTC'],
     );
   }
 
