@@ -11,7 +11,7 @@ This week has no features. The goal is a place where features can be built **saf
 | 5 | [PostgreSQL in Docker](#step-5--postgresql-in-docker) | YOU-9 | Done |
 | 6 | [Database module](#step-6--database-module) | YOU-10 | Done |
 | 7 | [Health endpoint + e2e tests](#step-7--health-endpoint--e2e-tests) | YOU-12 | Done, one part moved to week 2 |
-| — | [Initial migration](#not-finished-yet) | YOU-11 | Not started (needs `SCHEMA.md`) |
+| 8 | [Initial migration](#step-8--initial-migration) | YOU-11 | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -292,8 +292,9 @@ There are **two databases** because the e2e tests delete all rows before every t
 
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | One PostgreSQL 16 container |
+| `docker-compose.yml` | One PostgreSQL 16 container, and pgAdmin to look at the data |
 | `docker/postgres-init/01-create-test-db.sql` | Creates the second database |
+| `docker/pgadmin/servers.json` | Tells pgAdmin how to reach the database, so nothing is typed by hand |
 | `.env.example` | Connection string for development |
 | `.env.test` | Connection string for the e2e tests |
 
@@ -307,9 +308,33 @@ There are **two databases** because the e2e tests delete all rows before every t
 | Test database | `your_guide_test` |
 
 - **Port 5433**, not 5432, so it does not clash with another PostgreSQL on the machine. Inside the container PostgreSQL still uses 5432.
-- **PostgreSQL 16**: the schema needs version 15 or newer.
+- **PostgreSQL 16**: the plan asks for version 15 or newer.
 - **The data is kept in a Docker volume**, so it survives `docker compose down`.
 - **The init script runs only once**, when the volume is first created. To start again from nothing: `docker compose down -v` (this deletes all data).
+
+**Two port numbers**
+
+The line `'5433:5432'` reads as *your machine : inside the container*.
+
+| Who connects | Host | Port |
+|---|---|---|
+| The API, the tests, any tool on your machine | `localhost` | `5433` |
+| Another container in the same compose file (pgAdmin) | `postgres` | `5432` |
+
+**A browser cannot open the database**
+
+`localhost:5433` in Chrome does not work. A browser speaks HTTP, and PostgreSQL speaks its own protocol. To look at the tables you need a database client.
+
+**pgAdmin: the database in the browser**
+
+pgAdmin is a database client that runs as a website. It starts with the database and is at <http://localhost:5050>.
+
+- There is no login page, and the server "Your Guide (local)" is already registered. Click it, then open **Databases → your_guide_dev → Schemas → public → Tables**.
+- To see rows: right-click a table → **View/Edit Data** → **All Rows**.
+- It is reachable only from your own machine (`127.0.0.1`), because it has no login.
+- The first start takes about a minute.
+
+Use pgAdmin to **look**. Do not change tables there: a change made by hand is not in the migration files, so no other database will get it.
 
 ### Check it
 
@@ -319,6 +344,8 @@ docker compose exec postgres psql -U your_guide -d your_guide_dev -c '\l'
 ```
 
 The list shows both `your_guide_dev` and `your_guide_test`.
+
+Open <http://localhost:5050> and click **Your Guide (local)**. The same two databases appear, with no password asked.
 
 ---
 
@@ -468,18 +495,129 @@ The answer is `{"status":"ok"}`.
 
 ---
 
+## Step 8 — Initial migration
+
+### Why
+
+**Why a migration and not "just create the tables".** The database must have the same structure everywhere: on the laptop, in the test database, and in production. Tables created by hand drift apart, and nobody remembers what was changed.
+
+A migration is a file that describes one change. The tool runs each file once, in order, and writes down which files it has run (in the `pgmigrations` table). So the question "which structure does this database have?" always has one answer.
+
+**Why plain SQL.** The whole project uses raw SQL. The migration reads the same as `SCHEMA.md`, so the two can be compared line by line.
+
+**Why the rules live in the database.** Take "one active session per user". If only the code checked it, two requests arriving at the same moment could both pass the check and both insert a row. A unique index in PostgreSQL cannot be passed by accident. The code can have a bug; the constraint still holds.
+
+### What we built
+
+| File | Purpose |
+|---|---|
+| `SCHEMA.md` (repo root) | The design: every table and why it exists |
+| `migrations/0001_initial.sql` | The SQL that creates the 8 tables |
+| `test/schema.e2e-spec.ts` | Proves the database enforces the rules |
+
+### How it works
+
+**The 8 tables**
+
+| Table | What it is |
+|---|---|
+| `users` | A person with an account |
+| `auth_sessions` | A logged-in browser (not a focus session) |
+| `profiles` | The onboarding answers, one row per user |
+| `goals` | A large objective |
+| `tasks` | A piece of work inside a goal |
+| `steps` | The smallest unit of work, in order |
+| `sessions` | A period of focused work on one step |
+| `struggles` | A moment the user said "I'm struggling", with the advice given |
+
+The reason for every column is in `SCHEMA.md`.
+
+**The migration file**
+
+It has two parts:
+
+```sql
+-- Up Migration
+CREATE TABLE users ( ... );
+
+-- Down Migration
+DROP TABLE users;
+```
+
+`up` applies the change. `down` undoes it. Tables are dropped in the opposite order they were created, because a table cannot be dropped while another still points to it.
+
+All pending migrations run inside one transaction. If one statement fails, nothing is created.
+
+**Which database**
+
+| Command | Database |
+|---|---|
+| `pnpm migrate up` | `your_guide_dev` (from `.env`) |
+| `pnpm test:e2e` | `your_guide_test`, migrated automatically before the tests |
+
+**The one change from the first draft**
+
+`steps.done BOOLEAN` became `steps.done_at TIMESTAMPTZ`. A step is done when `done_at` is not null. The progress page shows steps completed per day, and a boolean cannot say on which day.
+
+**The rules the tests prove**
+
+- The same email in a different letter case is rejected.
+- Two steps in one task cannot have the same position.
+- A user cannot have two active sessions, and can start a new one after the first ended.
+- A session cannot end before it starts.
+- A rating must be 1 to 5.
+- An unknown outcome or situation is rejected.
+- Deleting a goal deletes its tasks, steps, and sessions.
+- Deleting a session keeps its struggles, with `session_id` set to null.
+
+**Changing the schema later**
+
+Never edit a migration that has already run somewhere else. Add a new one:
+
+```bash
+pnpm migrate:create add-user-timezone
+```
+
+This creates `migrations/0002_add-user-timezone.sql`. Update `SCHEMA.md` in the same commit.
+
+Some later steps need things schema v1 does not have (for example a timezone on the user, or a way to archive a goal). The list is in `DECISIONS.md`. Each one will be a new migration at the step that needs it.
+
+### Check it
+
+```bash
+pnpm migrate up
+docker compose exec postgres psql -U your_guide -d your_guide_dev -c '\dt'
+```
+
+The list shows the 8 tables and `pgmigrations`.
+
+```bash
+pnpm migrate down
+pnpm migrate up
+```
+
+`down` removes the 8 tables; `up` creates them again.
+
+```bash
+pnpm test:e2e
+```
+
+The schema tests pass.
+
+---
+
 ## Not finished yet
 
 | What | Why not | When |
 |---|---|---|
-| Initial migration with all 8 tables (YOU-11) | It must follow `SCHEMA.md` exactly, and that file is not in the repo yet. The tool is ready: `pnpm migrate up`. | As soon as `SCHEMA.md` is added |
 | Test helper: create a user + logged-in agent (part of YOU-12) | It needs the register and login endpoints. | Week 2 |
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `docker compose up -d --wait` | Start PostgreSQL |
+| `docker compose up -d --wait` | Start PostgreSQL and pgAdmin (<http://localhost:5050>) |
+| `docker compose stop` | Stop them (the data is kept) |
 | `pnpm dev` | Start the API and restart on changes |
 | `pnpm build` | Compile to `dist/` |
 | `pnpm start` | Run the compiled app (the environment variables must already be set) |
@@ -489,3 +627,4 @@ The answer is `{"status":"ok"}`.
 | `pnpm test` | Unit tests |
 | `pnpm test:e2e` | E2E tests |
 | `pnpm migrate up` / `down` | Run or undo migrations |
+| `pnpm migrate:create <name>` | Create the next migration file |

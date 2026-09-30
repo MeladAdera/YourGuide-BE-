@@ -21,7 +21,7 @@ A step is finished only when its **Check it** part passes.
 
 | Week | Page | Steps |
 |---|---|---|
-| 1 | [Foundation](week-01-foundation.md) | Project structure · Type safety · Git hooks · NestJS app + config · PostgreSQL in Docker · Database module · Health endpoint + e2e tests |
+| 1 | [Foundation](week-01-foundation.md) | Project structure · Type safety · Git hooks · NestJS app + config · PostgreSQL in Docker · Database module · Health endpoint + e2e tests · Initial migration |
 
 Weeks 2–12 are added here as we build them.
 
@@ -30,6 +30,7 @@ Weeks 2–12 are added here as we build them.
 | File | What it holds |
 |---|---|
 | [`PROJECT.md`](../PROJECT.md) | The product: the problem, the solution, the features, the rules |
+| [`SCHEMA.md`](../SCHEMA.md) | The database: every table and why it exists |
 | [`DECISIONS.md`](../DECISIONS.md) | Every important decision, with the reason |
 
 ## Run the backend
@@ -41,10 +42,13 @@ cd backend
 pnpm install
 cp .env.example .env
 docker compose up -d --wait   # starts PostgreSQL on port 5433
+pnpm migrate up               # creates the tables
 pnpm dev                      # starts the API on port 3001
 ```
 
 Then open <http://localhost:3001/api/health>. You should see `{"status":"ok"}`.
+
+To look at the tables, open pgAdmin at <http://localhost:5050>.
 
 ## Adding a new step
 
