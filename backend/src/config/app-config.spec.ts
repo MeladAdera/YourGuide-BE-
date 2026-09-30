@@ -33,4 +33,14 @@ describe('AppConfig', () => {
       'Invalid environment variable PORT',
     );
   });
+
+  it('is in production mode only when NODE_ENV is "production"', () => {
+    expect(new AppConfig({ DATABASE_URL }).isProduction).toBe(false);
+    expect(
+      new AppConfig({ DATABASE_URL, NODE_ENV: 'development' }).isProduction,
+    ).toBe(false);
+    expect(
+      new AppConfig({ DATABASE_URL, NODE_ENV: 'production' }).isProduction,
+    ).toBe(true);
+  });
 });

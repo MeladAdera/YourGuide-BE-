@@ -23,7 +23,9 @@ A step is finished only when its **Check it** part passes.
 |---|---|---|
 | 1 | [Foundation](week-01-foundation.md) | Project structure · Type safety · Git hooks · NestJS app + config · PostgreSQL in Docker · Database module · Health endpoint + e2e tests · Initial migration |
 
-Weeks 2–12 are added here as we build them.
+| 2 | [Auth](week-02-auth.md) | Register · (login, guard, rate limit: not built yet) |
+
+Weeks 3–12 are added here as we build them.
 
 ## Other documents
 

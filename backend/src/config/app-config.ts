@@ -7,10 +7,13 @@ const DEFAULT_PORT = 3001;
 export class AppConfig {
   readonly databaseUrl: string;
   readonly port: number;
+  /** True when NODE_ENV is "production". Hosting platforms set it. */
+  readonly isProduction: boolean;
 
   constructor(env: NodeJS.ProcessEnv) {
     this.databaseUrl = required(env, 'DATABASE_URL');
     this.port = parsePort(env.PORT);
+    this.isProduction = env.NODE_ENV === 'production';
   }
 }
 

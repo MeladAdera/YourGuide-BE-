@@ -28,10 +28,16 @@
     ],
     "*.{json,yaml,yml}": "prettier --write"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "argon2"
+    ]
+  },
   "dependencies": {
     "@nestjs/common": "^12.1.1",
     "@nestjs/core": "^12.1.1",
     "@nestjs/platform-express": "^12.1.1",
+    "argon2": "^0.45.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "node-pg-migrate": "^9.0.0",

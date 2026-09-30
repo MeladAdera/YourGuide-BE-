@@ -228,6 +228,7 @@ The `ValidationPipe` follows another rule: **validate only at the boundaries**. 
 |---|---|---|
 | `DATABASE_URL` | Yes | — |
 | `PORT` | No | `3001` (the frontend will use 3000) |
+| `NODE_ENV` | No | Not production. Added in week 2: `production` turns on the `Secure` cookie. |
 
 `AppConfig` is a class. NestJS creates it once at startup. If `DATABASE_URL` is missing or `PORT` is not a valid port, the constructor throws and the app exits.
 
