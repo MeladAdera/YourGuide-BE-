@@ -1,0 +1,25 @@
+name: your-guide
+
+services:
+  postgres:
+    # SCHEMA.md needs PostgreSQL 15+ (ON DELETE SET NULL (column)).
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: your_guide
+      POSTGRES_PASSWORD: your_guide
+      POSTGRES_DB: your_guide_dev
+    ports:
+      # Host port 5433, so it never clashes with another local PostgreSQL on 5432.
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Runs only the first time the volume is created: adds your_guide_test.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U your_guide -d your_guide_dev']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres_data:
