@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Your Guide (local)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "your_guide_dev",
+      "Username": "your_guide",
+      "PasswordExecCommand": "echo your_guide",
+      "SSLMode": "prefer"
+    }
+  }
+}
