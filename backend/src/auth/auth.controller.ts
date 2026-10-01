@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
@@ -10,8 +11,10 @@ import {
 import type { Request, Response } from 'express';
 import { AppConfig } from '../config/app-config.js';
 import { AuthService } from './auth.service.js';
+import { CurrentUser } from './current-user.decorator.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
+import { Public } from './public.decorator.js';
 import {
   clearSessionCookie,
   readSessionToken,
@@ -26,6 +29,7 @@ export class AuthController {
     private readonly config: AppConfig,
   ) {}
 
+  @Public()
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -38,6 +42,7 @@ export class AuthController {
 
   // 200, not the 201 that POST gives by default: login creates nothing the
   // client asked for by name, it only answers "yes, this is you".
+  @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
@@ -49,8 +54,10 @@ export class AuthController {
     return user;
   }
 
-  // Always 204: with no cookie or an unknown token, the user is already
-  // logged out, so there is nothing to refuse.
+  // Public and always 204: with no cookie, an expired session or an unknown
+  // token, the user is already logged out, so there is nothing to refuse.
+  // A browser with a stale cookie must still be able to clear it.
+  @Public()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
@@ -62,5 +69,11 @@ export class AuthController {
       await this.auth.logout(token);
     }
     clearSessionCookie(res, this.config.isProduction);
+  }
+
+  // Not @Public(): the guard has already checked the cookie when this runs.
+  @Get('me')
+  me(@CurrentUser() userId: string): Promise<User> {
+    return this.auth.currentUser(userId);
   }
 }

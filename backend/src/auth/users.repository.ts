@@ -27,6 +27,14 @@ export class UsersRepository {
     return user;
   }
 
+  async findById(executor: Executor, id: string): Promise<User | undefined> {
+    const { rows } = await executor.query<User>(
+      `SELECT id, email, timezone FROM users WHERE id = $1`,
+      [id],
+    );
+    return rows[0];
+  }
+
   /**
    * Used by login only. The hash is returned next to the user, not inside it,
    * so a `User` sent to the browser can never contain it.

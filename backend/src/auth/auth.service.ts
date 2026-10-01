@@ -94,6 +94,17 @@ export class AuthService implements OnModuleInit {
     return { user: found.user, session };
   }
 
+  /** For GET /auth/me. `userId` comes from the guard, so the user exists. */
+  async currentUser(userId: string): Promise<User> {
+    const user = await this.users.findById(this.db.pool, userId);
+    if (user === undefined) {
+      // ON DELETE CASCADE removes a user's sessions with the user, so a live
+      // session without a user means the database is broken. Fail fast.
+      throw new Error(`Session belongs to missing user ${userId}`);
+    }
+    return user;
+  }
+
   /** Deleting the row is what ends the session: the token stops working. */
   async logout(token: string): Promise<void> {
     await this.authSessions.deleteByTokenHash(this.db.pool, hashToken(token));

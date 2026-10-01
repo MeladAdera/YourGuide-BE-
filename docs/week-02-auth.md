@@ -6,7 +6,7 @@ This week the app learns who is using it. Every table of user data has `user_id`
 |---|---|---|---|
 | 1 | [Register](#step-1--register) | YOU-13 | Done |
 | 2 | [Login + logout](#step-2--login-and-logout) | YOU-14 | Done |
-| 3 | Global guard + `GET /auth/me` | YOU-15 | Not started |
+| 3 | [Global guard + `GET /auth/me`](#step-3--global-guard-and-get-authme) | YOU-15 | Done |
 | 4 | Rate limit on register and login | YOU-16 | Not started |
 
 All commands on this page run inside `backend/`.
@@ -370,3 +370,186 @@ curl -i -b /tmp/cookies.txt -X POST http://localhost:3001/api/auth/logout
 ```
 
 You get `204` and a `Set-Cookie` header with an empty value and the date `01 Jan 1970`. In pgAdmin, the row from command 1 is gone.
+
+---
+
+## Step 3 — Global guard and `GET /auth/me`
+
+### Why
+
+After step 2 the server writes session rows but never reads them. No route is protected: anyone can call anything. This step adds the guard that reads the cookie on every request, and the first route that needs it, `GET /api/auth/me`.
+
+Two decisions here shape every later route:
+
+- **Closed by default.** Every route needs a login unless it is marked `@Public()`. A forgotten `@Public()` shows up at once as a `401`. A forgotten guard would leak data silently. We choose the mistake that is visible.
+- **The handler gets a `userId`, nothing more.** The ownership rule in `PROJECT.md` says every query on user data filters by `user_id`. So the id is exactly what every later handler needs, and it comes from the cookie, never from the request body or the URL.
+
+This is the last piece the other weeks depend on: goals, tasks, steps and sessions can now be built as "the current user's" data.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `src/auth/public.decorator.ts` | Decorator | New: `@Public()` marks an open route |
+| `src/auth/auth-sessions.repository.ts` | Repository | New: find the owner of a live session |
+| `src/auth/auth.guard.ts` | Guard | New: the check that runs before every handler |
+| `src/auth/auth.module.ts` | Module | Registers the guard for the whole app |
+| `src/auth/current-user.decorator.ts` | Decorator | New: `@CurrentUser()` gives the handler the `userId` |
+| `src/auth/users.repository.ts` | Repository | New: find a user by id |
+| `src/auth/auth.service.ts` | Service | New: `currentUser` |
+| `src/auth/auth.controller.ts` | Controller | New: `GET /me`; register, login, logout marked `@Public()` |
+| `src/health/health.controller.ts` | Controller | Marked `@Public()` |
+| `test/auth-me.e2e-spec.ts` | Test | 6 e2e tests |
+
+### How it works
+
+**The request**
+
+```
+GET /api/auth/me
+Cookie: your_guide_session=<token>
+
+200 OK
+{ "id": "…", "email": "you@example.com", "timezone": "Asia/Dubai" }
+```
+
+| Problem | Status |
+|---|---|
+| No cookie, unknown token, session expired, or session deleted by logout | `401` with `Not logged in.` |
+
+**The path of every request from now on**
+
+```
+Request
+   ↓
+cookie-parser        Cookie header → req.cookies
+   ↓
+AuthGuard            is the route marked @Public()?          yes → let it through
+                     read the token from the cookie
+                     SHA-256 it, look it up:
+                       token_hash = ? AND expires_at > now()  no row → 401
+                     put userId on the request
+   ↓
+ValidationPipe       is the body valid?                       no → 400
+   ↓
+Handler              @CurrentUser() reads the userId
+```
+
+The order is fixed by NestJS: middleware (cookie-parser) runs first, then guards, then pipes, then the handler. That is why the guard can read `req.cookies`, and why an invalid body on a protected route still answers `401`, not `400`: the guard runs before validation.
+
+We built it in five small steps. Read the files in this order.
+
+**1. The marker** (`src/auth/public.decorator.ts`)
+
+`@Public()` stores one flag, `isPublic: true`, on the route. The guard reads the flag back. It can sit on one handler or on a whole controller.
+
+**2. The query** (`src/auth/auth-sessions.repository.ts`)
+
+```sql
+SELECT user_id
+  FROM auth_sessions
+ WHERE token_hash = $1 AND expires_at > now()
+```
+
+One query answers both questions: does this token exist, and is it still valid. An unknown token and an expired one give the same result, no row, so the guard treats them the same way. `token_hash` is the primary key, so the lookup is one index read.
+
+**3. The guard** (`src/auth/auth.guard.ts`, `src/auth/auth.module.ts`)
+
+```ts
+if (isPublic === true) return true;
+
+const token = readSessionToken(request);
+const userId = token === undefined
+  ? undefined
+  : await this.authSessions.findUserIdByTokenHash(this.db.pool, hashToken(token));
+if (userId === undefined) {
+  throw new UnauthorizedException('Not logged in.');
+}
+(request as AuthenticatedRequest).userId = userId;
+return true;
+```
+
+*Why throw, and not `return false`?* A guard that returns `false` makes NestJS answer `403 Forbidden`. That means "I know who you are, and you may not do this". Our case is "I do not know who you are", which is `401`. The frontend will use the difference: `401` means "show the login page".
+
+*Why is it registered in `AuthModule`?* `APP_GUARD` is a special NestJS token: a provider registered under it runs for every route in the whole app, no matter which module provides it. We provide it in `AuthModule` because the guard needs `AuthSessionsRepository`, which lives there.
+
+**4. The handler side** (`current-user.decorator.ts`, `users.repository.ts`, `auth.service.ts`, `auth.controller.ts`, `health.controller.ts`)
+
+`@CurrentUser()` is a parameter decorator. It reads the `userId` the guard put on the request and hands it to the handler as a plain, typed `string`:
+
+```ts
+@Get('me')
+me(@CurrentUser() userId: string): Promise<User> {
+  return this.auth.currentUser(userId);
+}
+```
+
+If a route is marked `@Public()` and also uses `@CurrentUser()`, the decorator throws a plain `Error`, which becomes a `500`. That is a mistake in our code, not a user's mistake, so it must be loud, not a `401` that looks like the user's problem.
+
+`GET /me` runs one more query, `SELECT … FROM users WHERE id = $1`, to return the full user. The guard does not load the user on every request, because almost no route needs more than the id. If the user does not exist, the service throws: `ON DELETE CASCADE` deletes a user's sessions with the user, so a live session without a user means the database is broken.
+
+*Which routes are public?*
+
+| Route | Why it is open |
+|---|---|
+| `POST /auth/register`, `POST /auth/login` | They are how you get a session |
+| `POST /auth/logout` | A browser with an expired or stale cookie must still be able to log out and clear it. "Already logged out" is a success, not an error. The Linear issue listed only register, login and health; logout is added for this reason |
+| `GET /health` | The hosting platform calls it without a login |
+
+Everything else, now and in every later week, is closed.
+
+**5. The tests** (`test/auth-me.e2e-spec.ts`)
+
+`GET /me` is the first protected route, so its tests are also the tests of the guard.
+
+| Rule | Test |
+|---|---|
+| A live cookie gives the user | `returns the logged-in user` |
+| No cookie is refused | `answers 401 without a cookie` |
+| A made-up token is refused | `answers 401 for a token that is not in the database` |
+| Logout really ends the session | `answers 401 after logout` |
+| An expired session is refused | `answers 401 when the session has expired` |
+| Refusal is `401`, not `403` | `answers 401, not 403, so the client knows to show the login page` |
+
+The register, login, logout and health tests send no cookie and still pass, which proves those routes are open.
+
+**What this step leaves for later**
+
+- The rate limit on register and login is step 4.
+- A session is checked against the database on every request. That is one primary-key lookup, which is fine at this size. A cache can come much later, if ever.
+
+### Check it
+
+```bash
+pnpm test:e2e
+```
+
+All 49 tests pass: 6 for `/auth/me` are new.
+
+Try it for real, with `pnpm dev` running:
+
+```bash
+# 1. Without a cookie.
+curl -i http://localhost:3001/api/auth/me
+```
+
+`401` with `Not logged in.`
+
+```bash
+# 2. Log in (saves the cookie), then ask who you are.
+curl -s -c /tmp/cookies.txt -X POST http://localhost:3001/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"correct horse battery"}'
+
+curl -i -b /tmp/cookies.txt http://localhost:3001/api/auth/me
+```
+
+`200` with your user.
+
+```bash
+# 3. Log out, then send the SAME cookie again.
+curl -i -b /tmp/cookies.txt -X POST http://localhost:3001/api/auth/logout
+curl -i -b /tmp/cookies.txt http://localhost:3001/api/auth/me
+```
+
+`204`, then `401`. The cookie file still holds the old token (`-b` only reads it), so this proves the session is gone from the database, not only from the browser.
