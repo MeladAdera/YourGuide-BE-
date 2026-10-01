@@ -7,7 +7,7 @@ This week the app learns who is using it. Every table of user data has `user_id`
 | 1 | [Register](#step-1--register) | YOU-13 | Done |
 | 2 | [Login + logout](#step-2--login-and-logout) | YOU-14 | Done |
 | 3 | [Global guard + `GET /auth/me`](#step-3--global-guard-and-get-authme) | YOU-15 | Done |
-| 4 | Rate limit on register and login | YOU-16 | Not started |
+| 4 | [Rate limit on register and login](#step-4--rate-limit-on-register-and-login) | YOU-16 | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -553,3 +553,139 @@ curl -i -b /tmp/cookies.txt http://localhost:3001/api/auth/me
 ```
 
 `204`, then `401`. The cookie file still holds the old token (`-b` only reads it), so this proves the session is gone from the database, not only from the browser.
+
+---
+
+## Step 4 — Rate limit on register and login
+
+### Why
+
+Checking a password takes about 0.1 second. That is slow for a guesser with a stolen database, but not for a guesser using the login form: one computer could try about ten passwords a second against one email, all day. The rate limit allows 5 requests a minute from one IP address. Thousands of guesses an hour become 300.
+
+Register gets the same limit, so nobody can fill the database with accounts.
+
+Only these two routes are limited. Every other route already needs a session cookie, so a limit there would only slow down real users.
+
+This step closes week 2: the app now knows who the user is, protects every route, and protects the two routes that cannot be protected by a login.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `package.json` | Dependency | New: `@nestjs/throttler` |
+| `src/auth/auth.module.ts` | Module | The numbers: 5 per minute, and the error message |
+| `src/auth/auth.controller.ts` | Controller | `@UseGuards(ThrottlerGuard)` on register and login |
+| `src/config/app-config.ts` | Config | New: `trustProxy`, from `TRUST_PROXY` |
+| `src/app.setup.ts` | App | Tells Express how many proxies to trust |
+| `.env.example` | Config | Documents `TRUST_PROXY` |
+| `src/config/app-config.spec.ts` | Test | 2 unit tests |
+| `test/helpers/reset-rate-limit.ts` | Test helper | Clears the counters before each test |
+| `test/auth-rate-limit.e2e-spec.ts` | Test | 5 e2e tests |
+| `test/auth-*.e2e-spec.ts` | Test | Each calls `resetRateLimits` in `beforeEach` |
+
+### How it works
+
+**The answer after the 5th attempt in a minute**
+
+```
+429 Too Many Requests
+Retry-After: 54
+{ "statusCode": 429, "message": "Too many attempts. Try again in a minute." }
+```
+
+`Retry-After` says in how many seconds the next attempt is allowed. Every *allowed* answer from a limited route also carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`, so the frontend can show "2 attempts left" if we want.
+
+**The path of a login from now on**
+
+```
+Request
+   ↓
+cookie-parser
+   ↓
+AuthGuard            login is @Public() → through
+   ↓
+ThrottlerGuard       key = this route + client IP
+                     attempts in the last minute ≥ 5?      yes → 429
+                     count this one
+   ↓
+ValidationPipe → AuthService.login → 200 or 401
+```
+
+A refused attempt is counted too. Five wrong passwords and then the right one gives `429`, not `200`. That is the point: the guesser does not get a 6th try, and neither does anyone else from that IP for the rest of the minute.
+
+We built it in five small steps.
+
+**1. The numbers, in one place** (`src/auth/auth.module.ts`)
+
+```ts
+ThrottlerModule.forRoot({
+  throttlers: [{ ttl: minutes(1), limit: 5 }],
+  errorMessage: 'Too many attempts. Try again in a minute.',
+})
+```
+
+`ttl` is the window, `limit` the number of requests allowed inside it. Importing the module limits nothing by itself. It only provides the counter and the settings. A route is limited when it asks for the guard.
+
+**2. The two routes** (`src/auth/auth.controller.ts`)
+
+```ts
+@Public()
+@UseGuards(ThrottlerGuard)
+@Post('login')
+```
+
+The guard is put on the two handlers, not on the whole app. The other way round, a global guard with `@SkipThrottle()` on every other route, has the wrong default for us: the two public routes are the ones under attack, and everything else is already behind a login.
+
+**3. The client IP** (`src/config/app-config.ts`, `src/app.setup.ts`, `.env.example`)
+
+The limit counts per IP, so the server must know the client's IP. On `localhost` it does. In production there is a proxy in front of the API: the hosting platform's load balancer, and later Next.js, which forwards `/api/*` to us. Then every connection comes from the proxy's IP, and all users would share **one** counter: the 6th user to log in within a minute would be locked out.
+
+Proxies pass the real IP in the `X-Forwarded-For` header. Express reads it only when told how many proxies to trust: `app.set('trust proxy', 1)`. That number is the new `TRUST_PROXY` variable, default `0`.
+
+Why not trust the header always? Because it is only a header. With no proxy in front, anyone could send `X-Forwarded-For: 1.2.3.4`, pick a new "IP" for every request, and the limit would count nothing. So trusting it is a decision made at deploy time, when we know how many proxies there are. Hosting is still open (`PROJECT.md`, section 12), so for now the variable is documented and off.
+
+**4. Where the count lives**
+
+The counters are a `Map` in the Node process, the default storage of `@nestjs/throttler`. Two consequences, both fine for now:
+
+- A restart forgets the counts.
+- If we ever run two copies of the API, each counts on its own, so the real limit is 10.
+
+A shared store such as Redis fixes both. We add it when there is a second copy, not before.
+
+**5. The tests** (`test/auth-rate-limit.e2e-spec.ts`, `test/helpers/reset-rate-limit.ts`)
+
+Because the counters are in memory, they survive from one test to the next. The register tests alone register more than 5 accounts, so without a reset they would start getting `429`. `resetRateLimits(app)` empties the counters, and every auth test file calls it in `beforeEach`, the same way the database is emptied before every test.
+
+| Rule | Test |
+|---|---|
+| 5 attempts pass, the 6th is refused with `429` and `Retry-After` | `allows 5 login attempts a minute and refuses the 6th with 429` |
+| The right password does not help on the 6th try, and nothing is checked | `refuses the 6th attempt even when the password is correct` |
+| Register has the same limit | `limits register the same way` |
+| Each route has its own counter | `counts login and register separately` |
+| Nothing else is limited | `does not limit other routes` |
+
+**What this step leaves for later**
+
+- The limit is per IP. A guesser with many IPs can try 5 a minute from each. A second limit per email, or a short lock after many failures, would help; not needed while the app is used by a few people.
+- `TRUST_PROXY` must be set when we deploy. The deploy step owns it.
+
+### Check it
+
+```bash
+pnpm test        # 10 unit tests
+pnpm test:e2e    # 54 e2e tests
+```
+
+Try it for real, with `pnpm dev` running:
+
+```bash
+for i in 1 2 3 4 5 6; do
+  curl -s -o /dev/null -w "attempt $i: %{http_code}\n" \
+    -X POST http://localhost:3001/api/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"you@example.com","password":"wrong password"}'
+done
+```
+
+Attempts 1 to 5 answer `401`, attempt 6 answers `429`. Run attempt 6 with `-i` to see the `Retry-After` header. Wait a minute, and `401` comes back.

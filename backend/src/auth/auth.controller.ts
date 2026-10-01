@@ -7,7 +7,9 @@ import {
   Post,
   Req,
   Res,
+  UseGuards,
 } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AppConfig } from '../config/app-config.js';
 import { AuthService } from './auth.service.js';
@@ -29,7 +31,10 @@ export class AuthController {
     private readonly config: AppConfig,
   ) {}
 
+  // Rate limited (5 per minute per IP, set in auth.module.ts): without it,
+  // anyone could fill the database with accounts.
   @Public()
+  @UseGuards(ThrottlerGuard)
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -42,7 +47,9 @@ export class AuthController {
 
   // 200, not the 201 that POST gives by default: login creates nothing the
   // client asked for by name, it only answers "yes, this is you".
+  // Rate limited: 5 password guesses a minute, instead of thousands.
   @Public()
+  @UseGuards(ThrottlerGuard)
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(

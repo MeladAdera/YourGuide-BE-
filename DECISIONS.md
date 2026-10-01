@@ -58,3 +58,11 @@ The Linear issues were written for a later draft (v1.3) that is not in the repo.
 | Deferrable unique step position | a plain `UNIQUE (task_id, position)` | YOU-21 (reorder) |
 | Composite foreign keys for ownership | single-column foreign keys | No issue depends on it. Services check that the parent belongs to the user before inserting (YOU-19). |
 | Review fields only on an ended session | no such check | YOU-23 |
+
+## 2026-10-01 — Rate limit per IP, counted in memory; proxies trusted only via `TRUST_PROXY`
+
+Register and login allow 5 requests a minute per IP (`@nestjs/throttler`, YOU-16). The counters live in the Node process: a restart forgets them, and two copies of the API would each count on their own. A shared store (Redis) is added only when there is a second copy.
+
+The limit needs the real client IP. Behind a proxy (hosting platform, Next.js rewrites) Express sees the proxy's IP unless told how many proxies to trust. That is `TRUST_PROXY` (default `0`). It is not always on, because `X-Forwarded-For` is just a header: with no proxy, anyone could pick their own IP and the limit would count nothing. The value is decided at deploy time, when hosting is chosen.
+
+Logout is public (YOU-15), although the issue listed only register, login and health. A browser with an expired or stale cookie must still be able to log out and clear it; "already logged out" is a success.

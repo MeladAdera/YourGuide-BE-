@@ -209,6 +209,7 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 | Variable | Used by |
 |---|---|
 | `DATABASE_URL` | api |
+| `TRUST_PROXY` | api (optional, default 0: how many proxies are in front, set at deploy so the rate limit sees the real client IP) |
 | `ANTHROPIC_API_KEY` | api (added in phase 5) |
 | `API_URL` | web (rewrite target) |
 

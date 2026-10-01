@@ -43,4 +43,20 @@ describe('AppConfig', () => {
       new AppConfig({ DATABASE_URL, NODE_ENV: 'production' }).isProduction,
     ).toBe(true);
   });
+
+  it('trusts no proxy unless TRUST_PROXY says how many', () => {
+    expect(new AppConfig({ DATABASE_URL }).trustProxy).toBe(0);
+    expect(new AppConfig({ DATABASE_URL, TRUST_PROXY: '' }).trustProxy).toBe(0);
+    expect(new AppConfig({ DATABASE_URL, TRUST_PROXY: '2' }).trustProxy).toBe(
+      2,
+    );
+  });
+
+  it('throws when TRUST_PROXY is not a whole number of proxies', () => {
+    for (const value of ['abc', '-1', '1.5', 'true']) {
+      expect(() => new AppConfig({ DATABASE_URL, TRUST_PROXY: value })).toThrow(
+        'Invalid environment variable TRUST_PROXY',
+      );
+    }
+  });
 });

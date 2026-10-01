@@ -4,6 +4,7 @@ import request, { Response } from 'supertest';
 import { App } from 'supertest/types.js';
 import { DatabaseService } from '../src/database/database.service.js';
 import { createTestApp } from './helpers/create-test-app.js';
+import { resetRateLimits } from './helpers/reset-rate-limit.js';
 import {
   sessionCookie,
   sessionToken,
@@ -38,6 +39,11 @@ describe('POST /api/auth/register', () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  // Register is rate limited (5 a minute), and this file registers more.
+  beforeEach(() => {
+    resetRateLimits(app);
   });
 
   it('creates the account and returns the user without the password', async () => {

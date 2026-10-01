@@ -4,6 +4,7 @@ import request, { Response } from 'supertest';
 import { App } from 'supertest/types.js';
 import { DatabaseService } from '../src/database/database.service.js';
 import { createTestApp } from './helpers/create-test-app.js';
+import { resetRateLimits } from './helpers/reset-rate-limit.js';
 import {
   sessionCookie,
   sessionToken,
@@ -44,6 +45,7 @@ describe('POST /api/auth/login', () => {
 
   // Every test starts with one account, which has one session from register.
   beforeEach(async () => {
+    resetRateLimits(app);
     registered = await request(app.getHttpServer())
       .post('/api/auth/register')
       .send(USER);
