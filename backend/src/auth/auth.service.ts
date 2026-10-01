@@ -84,6 +84,11 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
+    // Expired sessions are useless rows. Each user removes their own at
+    // login, so the table does not grow forever and no cleanup job is needed.
+    // Live sessions (another device) are kept.
+    await this.authSessions.deleteExpiredForUser(this.db.pool, found.user.id);
+
     // Every login gets a new token. An old one is never reused.
     const session = await this.createSession(this.db.pool, found.user.id);
     return { user: found.user, session };

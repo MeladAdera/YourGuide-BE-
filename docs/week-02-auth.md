@@ -170,11 +170,11 @@ This step adds four security habits:
 | `src/auth/session-cookie.ts` | Helper | New: read the token, clear the cookie |
 | `src/auth/dto/login.dto.ts` | Boundary | What a valid login request looks like |
 | `src/auth/users.repository.ts` | Repository | New: find a user by email, with the hash |
-| `src/auth/auth-sessions.repository.ts` | Repository | New: delete a session |
+| `src/auth/auth-sessions.repository.ts` | Repository | New: delete a session, delete expired sessions |
 | `src/auth/auth.service.ts` | Service | New: `login`, `logout`, the dummy hash |
 | `src/auth/auth.controller.ts` | Controller | New: the two routes |
 | `test/helpers/session-cookie.ts` | Test helper | Reads the cookie from a response |
-| `test/auth-login.e2e-spec.ts` | Test | 11 e2e tests |
+| `test/auth-login.e2e-spec.ts` | Test | 12 e2e tests |
 | `test/auth-logout.e2e-spec.ts` | Test | 5 e2e tests |
 
 ### How it works
@@ -218,7 +218,8 @@ AuthService          1. find the user by email
                           user found  → their hash
                           no user     → the dummy hash
                      3. no user, or no match?            yes → 401
-                     4. save a new login session
+                     4. delete this user's expired sessions
+                     5. save a new login session
    ↓
 AuthController       sets the cookie, returns the user
 ```
@@ -272,6 +273,12 @@ DELETE FROM auth_sessions WHERE token_hash = $1
 
 The server hashes the token from the cookie and deletes the row with that hash. It deletes one session only. A login on another device stays.
 
+```sql
+DELETE FROM auth_sessions WHERE user_id = $1 AND expires_at <= now()
+```
+
+Run at every successful login. An expired session is a useless row, and nothing else removes it. Each user removes their own at login, so the table does not grow forever and we need no cleanup job. Only expired rows go: a live session on another device stays. Both queries use the index `auth_sessions_user_idx`.
+
 **4. The logic** (`src/auth/auth.service.ts`, `src/auth/auth.controller.ts`)
 
 *One answer for every failed login.* Both cases throw the same `401` with the same message. If they were different, anyone could type emails into the login form and learn who has an account.
@@ -294,7 +301,7 @@ Measured on a running server, 20 requests each: wrong password 140 ms, unknown e
 
 *A new token for every login.* `login` calls the same `createSession` as register: 32 new random bytes, and only the SHA-256 hash is stored. An old token gains nothing from a new login.
 
-*No transaction.* Register writes two rows, so it needs one. Login writes one row, and one `INSERT` is already all-or-nothing.
+*No transaction.* Register writes two rows that belong together, so it needs one. Login deletes expired rows and inserts one new row, but the two do not depend on each other: if the cleanup ran and the insert failed, nothing would be wrong.
 
 *Login answers 200, logout 204.* NestJS answers `201 Created` to a `POST` by default. Login does not create something the client asked for, so it answers `200`. Logout has nothing to return, so it answers `204`.
 
@@ -308,6 +315,7 @@ Each rule above has a test, so a later change cannot break it without a test fai
 |---|---|
 | The hash never leaves the server | `returns the user without the password` |
 | A new token for every login | `creates a new session and stores only a hash of its token` |
+| Expired sessions are removed at login, live ones stay | `deletes the expired sessions of this user only` |
 | Letter case does not matter | `accepts the email in any letter case` |
 | A failed login creates nothing | `rejects a wrong password with 401 and no session` |
 | One answer for every failed login | `answers an unknown email exactly like a wrong password` |
@@ -322,7 +330,7 @@ The small functions that read the cookie from a response moved to `test/helpers/
 
 - Anyone can still try passwords as fast as they like. The rate limit is step 4.
 - Nothing reads the session yet. A deleted or expired session is only refused once the guard exists (step 3).
-- A new login does not end older sessions of the same user. They end at logout or after 30 days.
+- A new login does not end the user's other *live* sessions. They end at logout, or are removed at the first login after they expire.
 
 ### Check it
 
@@ -330,7 +338,7 @@ The small functions that read the cookie from a response moved to `test/helpers/
 pnpm test:e2e
 ```
 
-All 42 tests pass: 11 for login and 5 for logout are new.
+All 43 tests pass: 12 for login and 5 for logout are new.
 
 Try it for real, with `pnpm dev` running and the account from step 1:
 

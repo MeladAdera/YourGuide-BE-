@@ -81,6 +81,24 @@ describe('POST /api/auth/login', () => {
     );
   });
 
+  it('deletes the expired sessions of this user only', async () => {
+    const other = await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({ ...USER, email: 'other@example.com' });
+    await pool.query(
+      `UPDATE auth_sessions SET expires_at = now() - interval '1 second'`,
+    );
+
+    const response = await login(CREDENTIALS);
+
+    expect((await sessionHashes()).sort()).toEqual(
+      [
+        tokenHash(sessionToken(other)),
+        tokenHash(sessionToken(response)),
+      ].sort(),
+    );
+  });
+
   it('accepts the email in any letter case', async () => {
     const response = await login({
       ...CREDENTIALS,

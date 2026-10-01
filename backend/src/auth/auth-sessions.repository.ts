@@ -14,6 +14,17 @@ export class AuthSessionsRepository {
     );
   }
 
+  /** Cleanup at login: only this user's rows, and only the expired ones. */
+  async deleteExpiredForUser(
+    executor: Executor,
+    userId: string,
+  ): Promise<void> {
+    await executor.query(
+      `DELETE FROM auth_sessions WHERE user_id = $1 AND expires_at <= now()`,
+      [userId],
+    );
+  }
+
   async deleteByTokenHash(
     executor: Executor,
     tokenHash: string,
