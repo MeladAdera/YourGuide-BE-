@@ -31,12 +31,16 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "argon2"
+    ],
+    "ignoredBuiltDependencies": [
+      "@scarf/scarf"
     ]
   },
   "dependencies": {
     "@nestjs/common": "^12.1.1",
     "@nestjs/core": "^12.1.1",
     "@nestjs/platform-express": "^12.1.1",
+    "@nestjs/swagger": "^12.0.2",
     "@nestjs/throttler": "^6.7.1",
     "argon2": "^0.45.1",
     "class-transformer": "^0.5.1",

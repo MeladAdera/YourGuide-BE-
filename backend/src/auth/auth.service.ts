@@ -11,7 +11,8 @@ import { isUniqueViolation } from '../database/pg-errors.js';
 import { AuthSessionsRepository } from './auth-sessions.repository.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
-import { User, UsersRepository } from './users.repository.js';
+import { User } from './dto/user.dto.js';
+import { UsersRepository } from './users.repository.js';
 
 const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 

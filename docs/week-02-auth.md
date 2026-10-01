@@ -8,6 +8,7 @@ This week the app learns who is using it. Every table of user data has `user_id`
 | 2 | [Login + logout](#step-2--login-and-logout) | YOU-14 | Done |
 | 3 | [Global guard + `GET /auth/me`](#step-3--global-guard-and-get-authme) | YOU-15 | Done |
 | 4 | [Rate limit on register and login](#step-4--rate-limit-on-register-and-login) | YOU-16 | Done |
+| 5 | [Try the API in the browser (Swagger UI)](#step-5--try-the-api-in-the-browser-swagger-ui) | — | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -689,3 +690,82 @@ done
 ```
 
 Attempts 1 to 5 answer `401`, attempt 6 answers `429`. Run attempt 6 with `-i` to see the `Retry-After` header. Wait a minute, and `401` comes back.
+
+---
+
+## Step 5 — Try the API in the browser (Swagger UI)
+
+There is no Linear issue for this step. It was added so the auth routes can be tried by hand, not only through tests and `curl`.
+
+### Why
+
+Until now there were two ways to call the API: the e2e tests and `curl`. Both are exact, and both are slow when you just want to see what a route answers.
+
+Swagger UI is a page served by the API itself, at <http://localhost:3001/api/docs>. It lists every route with its body and its possible answers, lets you fill in the body and press **Execute**, and shows the response. Because the page has the same origin as the API, the browser keeps the session cookie after a login from the page, so the protected routes work there too.
+
+The same information is available as a file, the OpenAPI document at `/api/docs-json`. Apidog, Postman and similar tools import it.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `package.json` | Dependency | New: `@nestjs/swagger`. Also lists `@scarf/scarf` (a telemetry package it pulls in) under `ignoredBuiltDependencies`, so its install script never runs. pnpm may still print a warning about it; that is a pnpm bug ([#9296](https://github.com/pnpm/pnpm/issues/9296)) and harmless |
+| `src/api-docs.ts` | App | Builds the OpenAPI document and serves Swagger UI |
+| `src/main.ts` | App | Calls it, except in production |
+| `src/auth/dto/user.dto.ts` | Boundary | `User` is now a class here, moved from `users.repository.ts` |
+| `src/auth/dto/register.dto.ts`, `login.dto.ts` | Boundary | `@ApiProperty` on each field: example and limits |
+| `src/auth/auth.controller.ts`, `src/health/health.controller.ts` | Controller | A summary and the possible answers of each route |
+| `test/helpers/create-test-app.ts` | Test helper | Option to serve the docs in a test |
+| `test/api-docs.e2e-spec.ts` | Test | 4 e2e tests |
+
+### How it works
+
+**Where the page comes from**
+
+Nothing is written twice. NestJS reads the decorators that already exist and a few new ones:
+
+| Decorator | Already there? | Becomes |
+|---|---|---|
+| `@Controller('auth')`, `@Post('login')` | Yes | The list of routes |
+| `@Body() dto: LoginDto` | Yes | The request body |
+| `@ApiProperty({ example, maxLength })` on a DTO field | New | The fields of the body, with an example to click "Execute" with |
+| `@ApiOperation({ summary })` | New | One line that says what the route does |
+| `@ApiOkResponse({ type: User })`, `@ApiUnauthorizedResponse({ description })` | New | The possible answers |
+| `@ApiCookieAuth()` | New | A lock icon: this route needs the session cookie |
+
+The same `LoginDto` that checks the request also documents it. If a field changes, the docs change with it.
+
+**Why `User` became a class**
+
+Swagger needs a place to hang `@ApiProperty` on, and an interface is gone after compilation. So `User` is now a class in `src/auth/dto/user.dto.ts`, with the same three fields. The repositories use it as a plain type, as before. Nothing else changed.
+
+**The cookie**
+
+The **Authorize** button on the page cannot log you in: browsers do not let a page write the `Cookie` header. The login route does it instead. Call `POST /auth/login` from the page, the response sets the cookie, the browser stores it, and every later call from the page sends it. The `@ApiCookieAuth()` lock on `GET /auth/me` is documentation, not a login form.
+
+**Open without a login**
+
+The guard from step 3 closes every route by default. Swagger's routes stay open, because `SwaggerModule.setup` registers them on Express directly, not as NestJS controllers, so guards never see them. They must be open: you log in *from* that page.
+
+**Development only**
+
+`main.ts` skips the docs when `NODE_ENV` is `production`. In production only the web app talks to the API, and a smaller surface is a better surface. The e2e test asks for the docs explicitly, `createTestApp({ apiDocs: true })`, so the other test files start the app exactly as before.
+
+**Apidog**
+
+In Apidog: **Import** → **URL** → `http://localhost:3001/api/docs-json`. Apidog keeps cookies between requests, so login followed by `/auth/me` works there as in the browser.
+
+### Check it
+
+```bash
+pnpm test:e2e
+```
+
+All 58 tests pass: 4 for the docs are new. They check that the page is served without a login, that every route is listed, that the bodies are described field by field, and that `/auth/me` is marked as needing the cookie.
+
+Try it for real, with `pnpm dev` running. Open <http://localhost:3001/api/docs>:
+
+1. **POST /auth/login** → **Try it out** → **Execute**. The example body is already filled in; use the account from step 1. You get `200`, and in the response headers a `set-cookie` line.
+2. **GET /auth/me** → **Execute**. You get `200` and your user. No cookie was typed anywhere: the browser sent it.
+3. **POST /auth/logout** → **Execute** → `204`.
+4. **GET /auth/me** again → `401`.

@@ -23,7 +23,7 @@ A step is finished only when its **Check it** part passes.
 |---|---|---|
 | 1 | [Foundation](week-01-foundation.md) | Project structure · Type safety · Git hooks · NestJS app + config · PostgreSQL in Docker · Database module · Health endpoint + e2e tests · Initial migration |
 
-| 2 | [Auth](week-02-auth.md) | Register · Login + logout · Global guard + `/auth/me` · Rate limit on register and login |
+| 2 | [Auth](week-02-auth.md) | Register · Login + logout · Global guard + `/auth/me` · Rate limit on register and login · Swagger UI |
 
 Weeks 3–12 are added here as we build them.
 
@@ -49,6 +49,8 @@ pnpm dev                      # starts the API on port 3001
 ```
 
 Then open <http://localhost:3001/api/health>. You should see `{"status":"ok"}`.
+
+To try every route from the browser, open <http://localhost:3001/api/docs> (Swagger UI).
 
 To look at the tables, open pgAdmin at <http://localhost:5050>.
 

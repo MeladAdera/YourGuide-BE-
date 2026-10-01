@@ -1,12 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Executor } from '../database/database.service.js';
-
-/** A user as the API returns it. Never includes the password hash. */
-export interface User {
-  id: string;
-  email: string;
-  timezone: string;
-}
+import { User } from './dto/user.dto.js';
 
 @Injectable()
 export class UsersRepository {
