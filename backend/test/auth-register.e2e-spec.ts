@@ -1,10 +1,14 @@
-import { createHash } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import { Pool } from 'pg';
 import request, { Response } from 'supertest';
 import { App } from 'supertest/types.js';
 import { DatabaseService } from '../src/database/database.service.js';
 import { createTestApp } from './helpers/create-test-app.js';
+import {
+  sessionCookie,
+  sessionToken,
+  tokenHash,
+} from './helpers/session-cookie.js';
 
 const VALID = {
   email: 'melad@example.com',
@@ -18,12 +22,6 @@ describe('POST /api/auth/register', () => {
 
   function register(body: object): Promise<Response> {
     return request(app.getHttpServer()).post('/api/auth/register').send(body);
-  }
-
-  function sessionCookie(response: Response): string | undefined {
-    return response
-      .get('Set-Cookie')
-      ?.find((cookie) => cookie.startsWith('your_guide_session='));
   }
 
   async function countUsers(): Promise<number | undefined> {
@@ -75,15 +73,13 @@ describe('POST /api/auth/register', () => {
 
   it('stores only a hash of the session token', async () => {
     const response = await register(VALID);
-    const token = sessionCookie(response)?.split(';')[0]?.split('=')[1] ?? '';
+    const token = sessionToken(response);
 
     const { rows } = await pool.query<{ token_hash: string }>(
       'SELECT token_hash FROM auth_sessions',
     );
     expect(token).not.toBe('');
-    expect(rows).toEqual([
-      { token_hash: createHash('sha256').update(token).digest('hex') },
-    ]);
+    expect(rows).toEqual([{ token_hash: tokenHash(token) }]);
   });
 
   it('rejects an email that is already registered with 409', async () => {

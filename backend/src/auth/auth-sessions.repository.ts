@@ -13,4 +13,13 @@ export class AuthSessionsRepository {
       [input.tokenHash, input.userId, input.expiresAt],
     );
   }
+
+  async deleteByTokenHash(
+    executor: Executor,
+    tokenHash: string,
+  ): Promise<void> {
+    await executor.query(`DELETE FROM auth_sessions WHERE token_hash = $1`, [
+      tokenHash,
+    ]);
+  }
 }

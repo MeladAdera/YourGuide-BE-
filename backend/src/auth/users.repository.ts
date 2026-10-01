@@ -26,4 +26,29 @@ export class UsersRepository {
     }
     return user;
   }
+
+  /**
+   * Used by login only. The hash is returned next to the user, not inside it,
+   * so a `User` sent to the browser can never contain it.
+   */
+  async findByEmailWithPasswordHash(
+    executor: Executor,
+    email: string,
+  ): Promise<{ user: User; passwordHash: string } | undefined> {
+    // lower(email) matches the unique index, so letter case does not matter.
+    const { rows } = await executor.query<User & { password_hash: string }>(
+      `SELECT id, email, timezone, password_hash
+         FROM users
+        WHERE lower(email) = lower($1)`,
+      [email],
+    );
+    const row = rows[0];
+    if (row === undefined) {
+      return undefined;
+    }
+    return {
+      user: { id: row.id, email: row.email, timezone: row.timezone },
+      passwordHash: row.password_hash,
+    };
+  }
 }
