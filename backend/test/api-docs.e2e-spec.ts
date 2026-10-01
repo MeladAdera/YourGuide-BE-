@@ -39,6 +39,7 @@ describe('API docs', () => {
       '/api/auth/me',
       '/api/auth/register',
       '/api/health',
+      '/api/profile',
     ]);
   });
 
