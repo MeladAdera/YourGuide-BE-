@@ -107,7 +107,7 @@ src/
 ## 5. Core Flow
 
 ```
-Onboarding (goal + why)
+Onboarding (8 screens: who I am → where I am → what matters → goal + why)
         ↓
 Goal → Tasks → Steps
         ↓
@@ -123,11 +123,25 @@ Progress chart ←──── AI advice + one small next step
 ## 6. Features
 
 ### 6.1 Onboarding
-Asked once, editable later. Answers are used in every AI advice.
-- What is your main goal?
-- Why do you want to achieve it?
-- What usually stops you?
-- (Full question list: decided later.)
+Eight short screens, each saved on its own, each opening with one line that says why it asks. Answers are editable later and feed every AI advice. The screens follow the arc of the app: who am I → where am I now → what matters to me → where do I want to go → why → what is stopping me.
+
+| # | Screen | Asks | Required |
+|---|---|---|---|
+| 1 | Basics | employment status; optional: age range, country, education level, occupation, years of experience | status only, screen can be skipped |
+| 2 | Your days now | typical day; what you would most like to change; optional: satisfied with, wish more time for | 2 |
+| 3 | What you have done | something you achieved, got through or surprised yourself with; optional: what was hard, what you learned about yourself | 1 |
+| 4 | What gets in the way | what you keep postponing or avoiding; optional: a mistake or regret that taught you something, a habit or pattern to change | 1 |
+| 5 | How you see yourself | "Describe yourself honestly. Who are you at this point in your life?"; optional: good at, what others come to you for, still figuring out | 1 |
+| 6 | Quick check-in | 8 statements, 1 (strongly disagree) to 5 (strongly agree) | 8 taps |
+| 7 | What matters to you | 2–5 values from a fixed list, each with an optional note; the person you want to become; optional: would regret not doing, remembered for | picks + 1 |
+| 8 | Your direction | goal, why it matters, usual blocker; optional: first outcome | 3 |
+
+Rules:
+- **The goal comes last.** Values before plans: the goal is written after the person has recalled what they can do, named what they avoid and chosen what matters.
+- Screen 1 is optional. Screens 2–7 must be saved before screen 8 is accepted; the backend answers `409` otherwise.
+- Nine written answers are required in total. Everything else is a tap or optional, and the more personal questions are the optional ones.
+- **The app never diagnoses.** It never says "you have low self-esteem" or names any condition. The check-in stores eight answers and no score.
+- We collect only what a feature reads: no city, address, birthdate, languages, field of study, gender or health. Age is a range; location is a country.
 
 ### 6.2 Goals, Tasks, Steps
 - Create a goal. A goal without work history can be **deleted**; a goal with history is **archived**, so progress keeps it.
@@ -184,7 +198,9 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | POST | `/api/auth/login` | Check password, set cookie |
 | POST | `/api/auth/logout` | Delete session, clear cookie |
 | GET | `/api/auth/me` | Current user |
-| GET / PUT | `/api/profile` | Onboarding answers |
+| GET / PUT | `/api/profile` | Screen 8 (the direction) plus every saved screen. `GET` is 404 until onboarding is complete; `PUT` completes it and is 409 until screens 2–7 are saved |
+| GET | `/api/profile/onboarding` | Which screens are saved and whether onboarding is complete |
+| GET / PUT | `/api/profile/sections/{screen}` | One onboarding screen: `basics`, `situation`, `achievements`, `patterns`, `self-view`, `confidence`, `values` |
 | GET / POST | `/api/goals` | List / create goals |
 | PATCH | `/api/goals/:id` | Rename goal |
 | DELETE | `/api/goals/:id` | Delete goal (409 if it has work history) |
@@ -226,11 +242,12 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 - SQL lives only in repositories. Services never write SQL.
 - Every repository method takes `userId`. No query on user data without it.
 - Rate limit `register` and `login` (`@nestjs/throttler`).
+- The app never states or stores a diagnosis. Reflection answers are signals for personalisation, never labels or scores.
 - Write every important decision in `DECISIONS.md` with the reason.
 
 ## 12. Open Questions (decide later)
 
-- Full onboarding question list.
+- Whether users can retake the check-in over time (that would turn `profile_confidence` into a history table).
 - Exact prompt for each struggle situation.
 - Quiz format for evaluation.
 - AI usage limit per user per day (AI calls cost money once other people use it).

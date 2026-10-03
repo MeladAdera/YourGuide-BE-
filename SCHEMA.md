@@ -4,6 +4,8 @@
 >
 > **Added later:** `users.timezone` (section 3.1), in migration `0002_add-user-timezone.sql`.
 >
+> **Added 2026-10-03:** the onboarding screen tables (sections 5.1–5.8) and `profiles.first_outcome`, `profiles.completed_at`, in migration `0003_onboarding-sections.sql`.
+>
 > **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
@@ -28,7 +30,9 @@ the SQL migrations.
 ```text
 User
  │
- ├──── Profile (1:1)
+ ├──── Profile (1:1)                onboarding screen 8: your direction
+ ├──── Profile screens (1:1 each)   onboarding screens 1–7, one table each
+ ├──── Profile values (1:N)         the picks on screen 7
  │
  ├──── Auth Sessions (1:N)
  │
@@ -132,9 +136,63 @@ A user can be logged in from multiple browsers/devices.
 
 ------------------------------------------------------------------------
 
-# 5. profiles
+# 5. profiles and the onboarding screens
 
-Stores onboarding information about the user.
+Onboarding is eight screens, in this order:
+
+```text
+1  Basics                 profile_basics        optional screen
+2  Your days now          profile_situation     required
+3  What you have done     profile_achievements  required
+4  What gets in the way   profile_patterns      required
+5  How you see yourself   profile_self_view     required
+6  Quick check-in         profile_confidence    required
+7  What matters to you    profile_meaning       required
+                          profile_values        the picks, 2–5 rows
+8  Your direction         profiles              required, saved last
+```
+
+Screen 8 is the `profiles` table. Screens 1–7 each have their own table.
+The goal is asked last on purpose: after a person has recalled what they
+can do, named what they avoid and chosen what matters, the goal they
+write is more specific and more their own. `PROJECT.md` §6.1 has the
+screens; `DECISIONS.md` (2026-10-03) has the reasoning.
+
+### Why one table per screen?
+
+-   A screen can be saved on its own, so nobody loses answers by leaving
+    half-way through.
+-   "Required on this screen" is `NOT NULL`. In one wide table every
+    column would have to be nullable and the rule would live only in
+    code.
+-   "This screen is done" is "this row exists". No status columns.
+-   Each table is small enough to read in one look.
+
+The cost is eight tables that look alike, and a full profile read that
+touches all of them.
+
+Rejected: one wide `profiles` table with about forty nullable columns;
+a generic `profile_answers (question_key, answer)` table; and one JSONB
+column per screen. The last two take every rule out of the database.
+
+### The shape every screen table shares
+
+```text
+user_id     primary key AND foreign key → one row per user, deleted with the user
+...         the answers of that screen
+updated_at  when the screen was last saved
+```
+
+### What must never happen
+
+-   A confidence answer outside 1–5 (`CHECK`).
+-   An option outside its list, for example an unknown employment status
+    (`CHECK`).
+-   The same value picked twice by one user (primary key).
+-   A diagnosis derived from any of these rows. That is an application
+    rule, not a constraint: the app never states or stores one.
+
+## 5.0 profiles — screen 8, your direction
 
 ```sql
 CREATE TABLE profiles (
@@ -148,9 +206,31 @@ CREATE TABLE profiles (
 
   usual_blocker TEXT NOT NULL,
 
+  -- "What would be the first sign you are moving?" Optional.
+  first_outcome TEXT,
+
+  -- When onboarding was finished. Set once, never updated.
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+### Why does it exist?
+
+It holds the user's **direction**: the long-term aim, why it matters,
+what usually gets in the way, and the first outcome they want to see.
+The AI advice is built on it, and every goal in the `goals` table is a
+concrete objective under it.
+
+### Main rules
+
+-   This row is also the sign that onboarding is complete. `GET
+    /api/profile` answers `404` until it exists.
+-   The API refuses to create it until the required screens (2–7) are
+    saved. The order is a product rule, so it lives in the backend.
+-   `completed_at` is set when the row is created; later edits only move
+    `updated_at`.
 
 ### Relationship
 
@@ -160,6 +240,317 @@ User 1 ───── 1 Profile
 
 `user_id` is both the primary key and foreign key because each user has
 one profile.
+
+## 5.1 profile_basics — screen 1, basics
+
+```sql
+CREATE TABLE profile_basics (
+  user_id UUID PRIMARY KEY
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  employment_status TEXT NOT NULL
+    CHECK (
+      employment_status IN (
+        'student',
+        'employed',
+        'self_employed',
+        'between_jobs',
+        'caregiver',
+        'retired',
+        'other'
+      )
+    ),
+
+  age_range TEXT
+    CHECK (
+      age_range IN (
+        'under_18',
+        '18_24',
+        '25_34',
+        '35_44',
+        '45_54',
+        '55_plus'
+      )
+    ),
+
+  -- ISO 3166-1 alpha-2, e.g. 'AE'. Country only, never a city or address.
+  country TEXT
+    CHECK (country ~ '^[A-Z]{2}$'),
+
+  education_level TEXT
+    CHECK (
+      education_level IN (
+        'secondary',
+        'vocational',
+        'bachelor',
+        'master',
+        'doctorate',
+        'other'
+      )
+    ),
+
+  -- "What do you do now, in your words?"
+  occupation TEXT,
+
+  years_experience TEXT
+    CHECK (
+      years_experience IN (
+        'none',
+        'under_2',
+        '2_5',
+        '6_10',
+        'over_10'
+      )
+    ),
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Why does it exist?
+
+Quick facts so advice fits the person's situation: a student and a
+parent working full time need different advice. Only the employment
+status is required; the rest can be skipped.
+
+### What is deliberately not here
+
+City, address, birthdate, languages, field of study, gender, health.
+No feature reads them. Age is a range and location is a country for the
+same reason: the app needs context, not identification.
+
+## 5.2 profile_situation — screen 2, your days now
+
+```sql
+CREATE TABLE profile_situation (
+  user_id UUID PRIMARY KEY
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  -- "What does your typical day look like?"
+  typical_day TEXT NOT NULL,
+
+  -- "What would you most like to change?"
+  want_to_change TEXT NOT NULL,
+
+  -- "What part of your life are you satisfied with?"
+  satisfied_with TEXT,
+
+  -- "What do you wish you had more time for?"
+  wish_more_time_for TEXT,
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Why does it exist?
+
+"Where am I now?" An honest look at how the days are actually spent,
+before any talk of goals.
+
+## 5.3 profile_achievements — screen 3, what you have done
+
+```sql
+CREATE TABLE profile_achievements (
+  user_id UUID PRIMARY KEY
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  -- "Something you achieved, got through, or surprised yourself with."
+  proud_of TEXT NOT NULL,
+
+  -- "What was difficult about it?"
+  what_was_hard TEXT,
+
+  -- "What did you learn about yourself from it?"
+  learned_about_self TEXT,
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Why does it exist?
+
+Evidence of what the person can do. When they later press "I'm
+struggling", the advice can point at their own track record instead of
+at a slogan.
+
+## 5.4 profile_patterns — screen 4, what gets in the way
+
+```sql
+CREATE TABLE profile_patterns (
+  user_id UUID PRIMARY KEY
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  -- "What do you keep postponing or avoiding?"
+  often_postpone TEXT NOT NULL,
+
+  -- "A mistake or regret that taught you something."
+  lesson_from_mistake TEXT,
+
+  -- "A habit or pattern you would like to change."
+  pattern_to_change TEXT,
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Why does it exist?
+
+"What is stopping me?" Patterns the person already knows about, in
+their own words. The wording is about habits and lessons, never about
+what is wrong with them; the optional questions are the more personal
+ones.
+
+## 5.5 profile_self_view — screen 5, how you see yourself
+
+```sql
+CREATE TABLE profile_self_view (
+  user_id UUID PRIMARY KEY
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  -- "Describe yourself honestly. Who are you at this point in your life?"
+  who_i_am TEXT NOT NULL,
+
+  -- "What are you naturally good at?"
+  good_at TEXT,
+
+  -- "What do other people usually come to you for?"
+  others_come_to_me_for TEXT,
+
+  -- "What are you still trying to understand about yourself?"
+  still_figuring_out TEXT,
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Why does it exist?
+
+"Who am I?" It comes after screens 3 and 4 on purpose: people describe
+themselves far better once they have just recalled concrete
+achievements and patterns.
+
+## 5.6 profile_confidence — screen 6, quick check-in
+
+```sql
+CREATE TABLE profile_confidence (
+  user_id UUID PRIMARY KEY
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  -- Eight statements, each answered 1 (strongly disagree) to 5 (strongly agree).
+  can_learn_if_persist      SMALLINT NOT NULL CHECK (can_learn_if_persist BETWEEN 1 AND 5),
+  can_try_again             SMALLINT NOT NULL CHECK (can_try_again BETWEEN 1 AND 5),
+  follow_through            SMALLINT NOT NULL CHECK (follow_through BETWEEN 1 AND 5),
+  focus_without_motivation  SMALLINT NOT NULL CHECK (focus_without_motivation BETWEEN 1 AND 5),
+  actions_shape_future      SMALLINT NOT NULL CHECK (actions_shape_future BETWEEN 1 AND 5),
+  doubt_despite_evidence    SMALLINT NOT NULL CHECK (doubt_despite_evidence BETWEEN 1 AND 5),
+  avoid_when_afraid         SMALLINT NOT NULL CHECK (avoid_when_afraid BETWEEN 1 AND 5),
+  compare_too_much          SMALLINT NOT NULL CHECK (compare_too_much BETWEEN 1 AND 5),
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+The statements, in the same order:
+
+```text
+can_learn_if_persist      I can learn difficult things if I keep at them.
+can_try_again             When I fail, I can usually try again.
+follow_through            I usually follow through on commitments I make to myself.
+focus_without_motivation  I can stay focused on something important even when I do not feel motivated.
+actions_shape_future      My actions can significantly improve my future.
+doubt_despite_evidence    I often doubt my ability even when I have evidence that I can succeed.
+avoid_when_afraid         I avoid difficult situations because I am afraid of failing.
+compare_too_much          I compare myself with other people too much.
+```
+
+### Why does it exist?
+
+Signals for personalisation. The last three map directly to the
+struggle situations `negative_thought`, `stuck` and `comparing`.
+
+### What must never happen
+
+There is **no total, no score and no label**. The eight answers are
+stored as they were given. A single number called "self-efficacy" is
+the first step towards a diagnosis, and the app never makes one.
+
+## 5.7 profile_meaning — screen 7, what matters to you
+
+```sql
+CREATE TABLE profile_meaning (
+  user_id UUID PRIMARY KEY
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  -- "What kind of person do you want to become?"
+  person_to_become TEXT NOT NULL,
+
+  -- "What would you regret not doing?"
+  would_regret_not_doing TEXT,
+
+  -- "What do you want people to remember about you?"
+  remembered_for TEXT,
+
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+### Why does it exist?
+
+"What matters to me?" The answers here are half of the "why" behind the
+goal on screen 8.
+
+## 5.8 profile_values — screen 7, the picks
+
+```sql
+CREATE TABLE profile_values (
+  user_id UUID NOT NULL
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  value TEXT NOT NULL
+    CHECK (
+      value IN (
+        'family',
+        'health',
+        'career',
+        'learning',
+        'contribution',
+        'financial_security',
+        'creativity',
+        'relationships',
+        'spirituality',
+        'independence'
+      )
+    ),
+
+  -- Optional: why this one matters to them.
+  note TEXT,
+
+  PRIMARY KEY (user_id, value)
+);
+```
+
+### Why does it exist?
+
+The user picks two to five areas that matter most and may explain each
+one. This is the one onboarding answer with many rows per user, so it
+is the one child table. The picks are a set, not a ranking: they are
+returned in alphabetical order.
+
+### Relationship
+
+```text
+User 1 ───── N Profile Values
+```
+
+A new `PUT` of screen 7 replaces the whole set in one transaction.
 
 ------------------------------------------------------------------------
 
@@ -575,6 +966,9 @@ This history becomes the initial "memory" of Your Guide.
                                        └───────────┘
 ```
 
+The seven onboarding screen tables and `profile_values` sit next to
+`profiles`: each has its own foreign key to `users` (section 5).
+
 ------------------------------------------------------------------------
 
 # 12. Ownership
@@ -584,6 +978,7 @@ Every table containing user data has `user_id`.
 Current ownership columns:
 
 ```text
+profiles.user_id            (and the eight profile_* tables)
 goals.user_id
 tasks.user_id
 steps.user_id
@@ -722,6 +1117,11 @@ domain requires it.
 | Step positions are unique within a task | UNIQUE constraint |
 | Deleting a goal deletes its work hierarchy | ON DELETE CASCADE |
 | Deleting a session keeps its struggle history | ON DELETE SET NULL |
+| One row per user for each onboarding screen | `user_id` is the primary key |
+| Required answers of a screen are present | NOT NULL |
+| An option field only holds a listed option | CHECK constraint |
+| A confidence answer is 1–5 | CHECK constraint |
+| A value is picked at most once per user | Primary key `(user_id, value)` |
 
 ------------------------------------------------------------------------
 
@@ -805,6 +1205,14 @@ The current v1 model is:
 users
 auth_sessions
 profiles
+profile_basics
+profile_situation
+profile_achievements
+profile_patterns
+profile_self_view
+profile_confidence
+profile_meaning
+profile_values
 goals
 tasks
 steps

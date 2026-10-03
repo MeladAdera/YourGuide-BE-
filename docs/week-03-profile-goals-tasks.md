@@ -1,12 +1,18 @@
-# Week 3 — Profile, goals and tasks
+# Week 3 — Profile, onboarding, goals and tasks
 
 Week 2 gave the app a user. This week the user gets data of their own: the onboarding answers, then goals, then tasks. Every route in this week follows one rule from `PROJECT.md`: the `userId` comes from the session cookie, never from the request, and every query filters by it.
 
 | # | Step | Linear | Status |
 |---|---|---|---|
 | 1 | [Profile](#step-1--profile) | YOU-17 | Done |
-| 2 | Goals | YOU-18 | Not started |
-| 3 | Tasks | YOU-19 | Not started |
+| 2 | [Onboarding: the database](#step-2--onboarding-the-database) | — | Done |
+| 3 | Onboarding: screens 1–6 | — | Not started |
+| 4 | Onboarding: screen 7, values | — | Not started |
+| 5 | Onboarding: direction, completion and status | — | Not started |
+| 6 | Goals | YOU-18 | Not started |
+| 7 | Tasks | YOU-19 | Not started |
+
+Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues are created from that design; the ids are filled in here once they exist.
 
 All commands on this page run inside `backend/`.
 
@@ -151,3 +157,68 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 3. **PUT /profile** → *Try it out* → the example answers are filled in → *Execute* → `200` with `updatedAt`.
 4. **GET /profile** → `200`, the same answers.
 5. **PUT /profile** again with a changed goal → `200`, a newer `updatedAt`. In pgAdmin, `profiles` still has one row.
+
+---
+
+## Step 2 — Onboarding: the database
+
+### Why
+
+Step 1 asked three questions and the first one was the goal. For the app this project describes, that is backwards: advice that fits a person needs to know who they are, where they are now and what matters to them, and a goal written *after* that reflection is more specific and more their own. So the profile became eight screens, with the goal last. `DECISIONS.md` (2026-10-03) has the full reasoning and `PROJECT.md` §6.1 the questions.
+
+The database comes first, before any route, for the same reason as in week 1: the rules live there. Which answers are required, which options exist, that a confidence answer is 1 to 5, that a value is picked once: all of that is a constraint, not a check in code. Steps 3 to 5 then only add the routes on top.
+
+### What we built
+
+| File | Purpose |
+|---|---|
+| `migrations/0003_onboarding-sections.sql` | Seven screen tables, `profile_values`, and two columns on `profiles` |
+| `SCHEMA.md` §5 | One section per table, with the question each column asks |
+| `test/schema.e2e-spec.ts` | 4 new tests: the constraints hold, and deleting a user deletes the screens |
+| `PROJECT.md` §5, §6.1, §8, §11, §12 | The screens, the new routes, the no-diagnosis rule |
+| `DECISIONS.md` | Four entries dated 2026-10-03 |
+
+### How it works
+
+**One table per screen.** Screens 1 to 7 are `profile_basics`, `profile_situation`, `profile_achievements`, `profile_patterns`, `profile_self_view`, `profile_confidence` and `profile_meaning`. Screen 8, the direction, is the `profiles` table from step 1. Every screen table has the same shape:
+
+```sql
+CREATE TABLE profile_situation (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  typical_day TEXT NOT NULL,          -- required on this screen
+  want_to_change TEXT NOT NULL,       -- required on this screen
+  satisfied_with TEXT,                -- optional
+  wish_more_time_for TEXT,            -- optional
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+Three things follow from this shape, and they are the reason for it:
+
+- `user_id` is the primary key, so there is one row per user and an upsert on it works exactly like the profile in step 1.
+- A required answer is `NOT NULL`. In one wide table with forty columns, every column would have to be nullable so a screen could be saved alone, and "required" would exist only in code.
+- A screen is done when its row exists. There is no status column to keep in sync.
+
+**Options are CHECK lists.** `employment_status`, `age_range`, `education_level`, `years_experience` and `value` each have a `CHECK (… IN (…))`, like `sessions.outcome` in week 1. In step 3 the same lists appear once more in code, as `as const` arrays, the way `SITUATIONS` does; the test in this step proves the database side.
+
+**The check-in is eight `SMALLINT` columns**, each `CHECK (… BETWEEN 1 AND 5)`, like `sessions.rating`. There is no total column, on purpose: the app stores answers, never a score.
+
+**`profile_values` is the one child table.** A user picks two to five values and may add a note to each, so this is the one answer with many rows per user. Its primary key is `(user_id, value)`: the same value cannot be picked twice.
+
+**Two columns on `profiles`.** `first_outcome` is the optional last question of screen 8. `completed_at` is set when the row is created and never changes; a later edit only moves `updated_at`. The row existing still means "onboarding is done", so `GET /api/profile` keeps answering `404` until then.
+
+**The down migration** drops the eight tables and the two columns, in reverse order.
+
+### Check it
+
+```bash
+pnpm migrate up
+```
+
+Prints `0003_onboarding-sections` as applied. In pgAdmin, the `your_guide` database now has 16 tables.
+
+```bash
+pnpm test:e2e
+```
+
+All 72 tests pass: 4 are new, in `test/schema.e2e-spec.ts`, and the table-count test now expects 16 tables.

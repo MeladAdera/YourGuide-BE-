@@ -66,3 +66,35 @@ Register and login allow 5 requests a minute per IP (`@nestjs/throttler`, YOU-16
 The limit needs the real client IP. Behind a proxy (hosting platform, Next.js rewrites) Express sees the proxy's IP unless told how many proxies to trust. That is `TRUST_PROXY` (default `0`). It is not always on, because `X-Forwarded-For` is just a header: with no proxy, anyone could pick their own IP and the limit would count nothing. The value is decided at deploy time, when hosting is chosen.
 
 Logout is public (YOU-15), although the issue listed only register, login and health. A browser with an expired or stale cookie must still be able to log out and clear it; "already logged out" is a success.
+
+## 2026-10-03 — Onboarding is eight screens, and the goal comes last
+
+The profile grew from three answers (goal, why, usual blocker) to eight screens: basics, your days now, what you have done, what gets in the way, how you see yourself, a quick confidence check-in, what matters to you, and only then your direction (goal, why, usual blocker, first outcome). `PROJECT.md` §6.1 lists the questions.
+
+**Why last:** asked first, the goal is whatever the person walked in with. After recalling evidence of what they can do, naming what they avoid and choosing what matters, the goal they write is more specific and more their own, and the "why" is half-written already. Values before plans, and a definite aim with a real why, are the two principles we take from the goal-setting literature behind the app, in our own words and questions.
+
+**Two ordering choices worth knowing:** "How you see yourself" sits fifth, not third, because people describe themselves better right after recalling concrete achievements and patterns (concrete before abstract). The check-in sits sixth because eight taps are a rest after the heaviest writing, and lead into values.
+
+**Required vs optional:** nine written answers are required in all; every other question is a tap or optional, and the more personal questions (a regret, what others come to you for) are the optional ones. Screen 1 can be skipped entirely. Screens 2–7 must exist before screen 8 is accepted: the backend answers 409 otherwise, because the order is a product rule and "all business logic lives in NestJS" (`PROJECT.md` §4).
+
+**Cost:** onboarding takes ten to fifteen minutes instead of two, and nothing in the app works until it is done. We accept that: the advice the app gives later is only as good as what it knows.
+
+## 2026-10-03 — One table per onboarding screen
+
+Each of screens 1–7 is its own table (`profile_basics` … `profile_meaning`, plus `profile_values` for the picks); screen 8 stays in `profiles`, which gains `first_outcome` and `completed_at`. Migration `0003_onboarding-sections.sql`; `SCHEMA.md` §5.
+
+**Why:** a screen can be saved on its own; "required on this screen" is `NOT NULL`; "screen done" is "row exists"; each table reads in one look.
+
+**Rejected:** one wide `profiles` with about forty nullable columns (required would live only in code, and one forty-field DTO); a generic `profile_answers (question_key, answer)` table and JSONB per screen (both take the rules out of the database, against every decision above).
+
+**Cost:** eight similar tables, the same upsert written eight times, and a full profile read that touches all of them. Adding a question is a migration plus a DTO field, which is what we want: the question list is part of the schema, not data.
+
+## 2026-10-03 — The check-in stores answers, never a score; the app never diagnoses
+
+`profile_confidence` holds eight answers from 1 to 5 and nothing derived. Two of the ten proposed statements were dropped: "I trust myself to make important decisions" (ties to no feature) and "my past mistakes define me" (the closest to a clinical screening item, and it invites shame). If week 6 needs a signal such as "compares a lot", it is a pure function over the raw answers, written and unit-tested then, and it names a behaviour, never a condition.
+
+The rule applies to the whole app: it never says or stores "you have depression / low self-esteem / anxiety", in a response, a prompt or a column. Reflection answers are personalisation signals.
+
+## 2026-10-03 — What onboarding deliberately does not collect
+
+City, address, birthdate, languages, field of study, gender, health. The test for every field was "which feature reads it?"; these had no answer. Age is a range and location is a two-letter country code, both optional. Free-text answers are the most sensitive data in the app: they go only to the user and to the backend's AI call, never into logs or error messages.

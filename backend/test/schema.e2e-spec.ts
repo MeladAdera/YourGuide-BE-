@@ -79,7 +79,7 @@ describe('Database schema', () => {
     await app.close();
   });
 
-  it('has the 8 tables from SCHEMA.md', async () => {
+  it('has the 16 tables from SCHEMA.md', async () => {
     const { rows } = await pool.query<{ tablename: string }>(
       `SELECT tablename FROM pg_tables
         WHERE schemaname = 'public' AND tablename <> 'pgmigrations'
@@ -89,6 +89,14 @@ describe('Database schema', () => {
     expect(rows.map((row) => row.tablename)).toEqual([
       'auth_sessions',
       'goals',
+      'profile_achievements',
+      'profile_basics',
+      'profile_confidence',
+      'profile_meaning',
+      'profile_patterns',
+      'profile_self_view',
+      'profile_situation',
+      'profile_values',
       'profiles',
       'sessions',
       'steps',
@@ -96,6 +104,78 @@ describe('Database schema', () => {
       'tasks',
       'users',
     ]);
+  });
+
+  it('rejects an onboarding option outside its list', async () => {
+    const userId = await insertUser();
+
+    await expect(
+      pool.query(
+        `INSERT INTO profile_basics (user_id, employment_status)
+         VALUES ($1, 'freelancer')`,
+        [userId],
+      ),
+    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+    await expect(
+      pool.query(
+        `INSERT INTO profile_basics (user_id, employment_status, country)
+         VALUES ($1, 'employed', 'Dubai')`,
+        [userId],
+      ),
+    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+  });
+
+  it('rejects a confidence answer outside 1–5', async () => {
+    const userId = await insertUser();
+
+    await expect(
+      pool.query(
+        `INSERT INTO profile_confidence (
+           user_id, can_learn_if_persist, can_try_again, follow_through,
+           focus_without_motivation, actions_shape_future,
+           doubt_despite_evidence, avoid_when_afraid, compare_too_much
+         ) VALUES ($1, 4, 4, 4, 4, 4, 2, 2, 6)`,
+        [userId],
+      ),
+    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+  });
+
+  it('rejects the same value picked twice and an unknown value', async () => {
+    const userId = await insertUser();
+    await pool.query(
+      "INSERT INTO profile_values (user_id, value) VALUES ($1, 'health')",
+      [userId],
+    );
+
+    await expect(
+      pool.query(
+        "INSERT INTO profile_values (user_id, value) VALUES ($1, 'health')",
+        [userId],
+      ),
+    ).rejects.toMatchObject({ code: UNIQUE_VIOLATION });
+    await expect(
+      pool.query(
+        "INSERT INTO profile_values (user_id, value) VALUES ($1, 'fame')",
+        [userId],
+      ),
+    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+  });
+
+  it('deleting a user deletes their onboarding screens', async () => {
+    const userId = await insertUser();
+    await pool.query(
+      "INSERT INTO profile_basics (user_id, employment_status) VALUES ($1, 'student')",
+      [userId],
+    );
+    await pool.query(
+      "INSERT INTO profile_values (user_id, value) VALUES ($1, 'learning')",
+      [userId],
+    );
+
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    expect(await count('profile_basics')).toBe(0);
+    expect(await count('profile_values')).toBe(0);
   });
 
   it('rejects the same email in a different letter case', async () => {
