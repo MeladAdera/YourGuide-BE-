@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service.js';
+import { ProfileSections } from '../dto/profile.dto.js';
 import { Achievements } from './achievements/achievements.dto.js';
 import { AchievementsRepository } from './achievements/achievements.repository.js';
 import { UpsertAchievementsDto } from './achievements/upsert-achievements.dto.js';
@@ -121,6 +122,45 @@ export class SectionsService {
       const values = await this.values.findByUserId(client, userId);
       return { ...meaning, values };
     });
+  }
+
+  /**
+   * Every screen at once, for the whole profile. A screen that is not
+   * saved is null, never 404: the profile exists even if basics was
+   * skipped. The seven lookups run in parallel on the pool.
+   */
+  async findAll(userId: string): Promise<ProfileSections> {
+    const pool = this.db.pool;
+    const [
+      basics,
+      situation,
+      achievements,
+      patterns,
+      selfView,
+      confidence,
+      meaning,
+    ] = await Promise.all([
+      this.basics.findByUserId(pool, userId),
+      this.situation.findByUserId(pool, userId),
+      this.achievements.findByUserId(pool, userId),
+      this.patterns.findByUserId(pool, userId),
+      this.selfView.findByUserId(pool, userId),
+      this.confidence.findByUserId(pool, userId),
+      this.meaning.findByUserId(pool, userId),
+    ]);
+    const values =
+      meaning === undefined
+        ? null
+        : { ...meaning, values: await this.values.findByUserId(pool, userId) };
+    return {
+      basics: basics ?? null,
+      situation: situation ?? null,
+      achievements: achievements ?? null,
+      patterns: patterns ?? null,
+      selfView: selfView ?? null,
+      confidence: confidence ?? null,
+      values,
+    };
   }
 }
 

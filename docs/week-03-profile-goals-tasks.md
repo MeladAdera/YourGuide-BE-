@@ -8,7 +8,7 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | 2 | [Onboarding: the database](#step-2--onboarding-the-database) | — | Done |
 | 3 | [Onboarding: screens 1–6](#step-3--onboarding-screens-16) | — | Done |
 | 4 | [Onboarding: screen 7, values](#step-4--onboarding-screen-7-values) | — | Done |
-| 5 | Onboarding: direction, completion and status | — | Not started |
+| 5 | [Onboarding: direction, completion and status](#step-5--onboarding-direction-completion-and-status) | — | Done |
 | 6 | Goals | YOU-18 | Not started |
 | 7 | Tasks | YOU-19 | Not started |
 
@@ -19,6 +19,8 @@ All commands on this page run inside `backend/`.
 ---
 
 ## Step 1 — Profile
+
+> **Changed in step 5.** `PUT /api/profile` is now screen 8 of eight: it is refused with `409` until screens 2–7 are saved, it takes an optional `firstOutcome`, and `GET /api/profile` returns every screen under `sections`. The text below describes step 1 as it was built. Its *Why* still holds, and the pattern it set is the one every screen table copied.
 
 ### Why
 
@@ -452,3 +454,136 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 2. **PUT /profile/sections/values** → *Try it out* → *Execute* with the example → `200`, picks in alphabetical order.
 3. Change one pick's `value` to the same as another → `400`, *values's elements must be unique*.
 4. In pgAdmin, `profile_values` has as many rows as picks; `profile_meaning` has one.
+
+---
+
+## Step 5 — Onboarding: direction, completion and status
+
+### Why
+
+Three things were still missing after steps 2 to 4:
+
+- **The order rule.** The whole redesign rests on "the goal comes after the reflection". Until this step nothing enforced it: a client could save the direction first and skip everything else. `PROJECT.md` §4 says all business logic lives in NestJS, so the rule goes into the backend, not into the wizard. Now `PUT /api/profile` answers `409` with the missing screens until screens 2 to 7 exist.
+- **One read for the whole person.** The AI advice (week 6) and the profile page (week 9) need every answer at once, not eight calls. `GET /api/profile` now returns the direction and every screen.
+- **Resume.** A wizard the person can leave half-way needs one question answered on return: *where was I?* `GET /api/profile/onboarding` answers it, and never with `404`.
+
+The one thing that did **not** change is the meaning of `GET /api/profile`: `404` until onboarding is complete, exactly as in step 1. The frontend still decides "show the wizard or the app" on one status code.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `src/profile/screens.ts` | Rule | The seven screen names, and which are required |
+| `src/profile/onboarding.repository.ts` | Repository | One query: which screens have a row |
+| `src/profile/dto/onboarding-status.dto.ts` | Boundary | `completed`, `screens`, `missing` |
+| `src/profile/dto/upsert-profile.dto.ts` | Boundary | Screen 8 with the optional `firstOutcome`, using `@Answer()` |
+| `src/profile/dto/profile.dto.ts` | Boundary | The whole profile: direction at the top, `sections` below |
+| `src/profile/profile.repository.ts` | Repository | Reads and writes `first_outcome`; never updates `completed_at` |
+| `src/profile/profile.service.ts` | Service | The `409` rule, the status, the full read |
+| `src/profile/profile.controller.ts` | Controller | `GET /api/profile/onboarding`; the `409` in Swagger |
+| `src/profile/sections/sections.service.ts` | Service | `findAll`: every screen, `null` where not saved |
+| `test/helpers/save-required-screens.ts` | Test | Saves screens 2–7 for a user |
+| `test/profile.e2e-spec.ts` | Test | 14 tests (was 10): the `409`, `firstOutcome`, `completedAt`, `sections` |
+| `test/profile-onboarding.e2e-spec.ts` | Test | 5 tests for the status route |
+
+### How it works
+
+**The requests**
+
+```
+GET /api/profile/onboarding
+Cookie: your_guide_session=<token>
+
+200 OK
+{
+  "completed": false,
+  "screens": { "basics": false, "situation": true, "achievements": true, "patterns": false,
+               "selfView": false, "confidence": false, "values": false },
+  "missing": ["patterns", "selfView", "confidence", "values"]
+}
+```
+
+```
+PUT /api/profile                            (screens 2–7 not all saved)
+{ "goal": "…", "whyItMatters": "…", "usualBlocker": "…" }
+
+409 Conflict
+{ "statusCode": 409, "error": "Conflict", "message": "Finish these screens first.",
+  "missing": ["patterns", "selfView", "confidence", "values"] }
+```
+
+```
+PUT /api/profile                            (screens 2–7 saved)
+{ "goal": "…", "whyItMatters": "…", "usualBlocker": "…", "firstOutcome": "…" }
+
+200 OK
+{
+  "goal": "…", "whyItMatters": "…", "usualBlocker": "…", "firstOutcome": "…",
+  "completedAt": "2026-10-03T20:30:00.000Z", "updatedAt": "2026-10-03T20:30:00.000Z",
+  "sections": {
+    "basics": null,
+    "situation": { … }, "achievements": { … }, "patterns": { … },
+    "selfView": { … }, "confidence": { … }, "values": { … }
+  }
+}
+```
+
+`GET /api/profile` returns the same body as the `200` above, or `404` before the direction exists.
+
+**1. Which screens are required** (`src/profile/screens.ts`)
+
+`SCREENS` lists the seven screen names in wizard order; `REQUIRED_SCREENS` is the same list without `basics`. That one line is the product rule. It is a constant, not configuration: the rule is part of the product, and changing it is a decision that belongs in `DECISIONS.md`, not in an environment variable.
+
+**2. One query for the status** (`src/profile/onboarding.repository.ts`)
+
+```sql
+SELECT
+  EXISTS (SELECT 1 FROM profile_basics    WHERE user_id = $1) AS basics,
+  EXISTS (SELECT 1 FROM profile_situation WHERE user_id = $1) AS situation,
+  …
+  EXISTS (SELECT 1 FROM profiles          WHERE user_id = $1) AS direction
+```
+
+Eight `EXISTS` in one statement, one row of booleans back. This is the payoff of "a screen is saved when its row exists" from step 2: there is no status column to read, and nothing that can be out of date. Screen 7 is represented by `profile_meaning`, because its picks can never exist without that row (step 4).
+
+**3. The 409** (`src/profile/profile.service.ts`)
+
+`upsert` calls `status` first and refuses if `missing` is not empty. The check runs on every save, not only the first: it costs one query, and it means the rule has no exceptions to remember. There is no `DELETE` for a screen, so a completed profile can never fall back into the missing state.
+
+The error body is built by hand (`statusCode`, `error`, `message`, `missing`) so it has the same shape as every other error, plus the one field the wizard needs. `409 Conflict` is the status for "the request is fine, the state is not": the body was valid, the person is just not there yet.
+
+**4. The full read** (`sections.service.ts`, `findAll`)
+
+Seven lookups in `Promise.all`, so they run at the same time on the pool, then the picks for screen 7 if its row exists. A screen that is not saved is `null`, not `404`: the profile exists even when basics was skipped. `ProfileService.get` combines the direction row with that object. Both `get` and `upsert` return the same shape, so the wizard's last `PUT` already gives the frontend everything it shows next.
+
+**5. `completedAt` never moves** (`profile.repository.ts`)
+
+The upsert's `DO UPDATE SET …` lists every column except `completed_at`, so a later edit of the goal keeps the day onboarding was finished. The test *keeps completedAt on a second put* proves it.
+
+**6. The tests**
+
+| Rule | Test |
+|---|---|
+| Refused with the missing list until screens 2–7 exist; basics changes nothing | `refuses the direction with 409 until screens 2–7 are saved` |
+| The whole profile comes back, with `basics: null` | `saves the direction and returns the whole profile on the next get` |
+| Basics appears once saved | `includes basics once that optional screen is saved too` |
+| `firstOutcome` is optional and clearable | `saves the optional first outcome and clears it when left out` |
+| `completedAt` is set once | `replaces the answers, moves updatedAt and keeps completedAt on a second put` |
+| Status is never `404`, reports each screen, and completes with the direction | `test/profile-onboarding.e2e-spec.ts` |
+
+### Check it
+
+```bash
+pnpm test:e2e
+```
+
+All 171 tests pass: 5 are new in `test/profile-onboarding.e2e-spec.ts`, and `test/profile.e2e-spec.ts` grew from 10 to 14.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running):
+
+1. **POST /auth/register** with a new email → *Execute*, so the browser has a cookie for a brand-new user.
+2. **GET /profile/onboarding** → `200`, everything `false`, six names under `missing`.
+3. **PUT /profile** → `409`, the same six names.
+4. Under **onboarding**, save screens 2 to 7 with their examples. **GET /profile/onboarding** → `missing: []`, `completed: false`.
+5. **PUT /profile** → `200` with `completedAt` and all six screens under `sections`, `basics: null`.
+6. **GET /profile/onboarding** → `completed: true`.

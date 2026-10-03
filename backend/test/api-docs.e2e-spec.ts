@@ -40,6 +40,7 @@ describe('API docs', () => {
       '/api/auth/register',
       '/api/health',
       '/api/profile',
+      '/api/profile/onboarding',
       '/api/profile/sections/achievements',
       '/api/profile/sections/basics',
       '/api/profile/sections/confidence',

@@ -1,36 +1,33 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { Answer } from '../answer.decorator.js';
 
-// The limit is generous: these are a few sentences, not essays. It exists so
-// nobody can store megabytes in a text column.
-const MAX = 1000;
-
-/** The onboarding answers. PUT sends all three, every time. */
+/**
+ * Screen 8, your direction. PUT sends the whole screen, every time. It is
+ * accepted only once screens 2–7 are saved (409 otherwise), and saving it
+ * is what completes onboarding.
+ */
 export class UpsertProfileDto {
-  @ApiProperty({
+  @Answer({
     example: 'Become a stronger full-stack developer',
-    maxLength: MAX,
+    description: 'What would you like to change or accomplish?',
   })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(MAX)
   goal!: string;
 
-  @ApiProperty({
+  @Answer({
     example: 'I want to build my own products without waiting for anyone.',
-    maxLength: MAX,
+    description: 'Why does it matter to you?',
   })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(MAX)
   whyItMatters!: string;
 
-  @ApiProperty({
+  @Answer({
     example: 'I open the editor, feel lost, and switch to something easier.',
-    maxLength: MAX,
+    description: 'What usually stops you?',
   })
-  @IsString()
-  @MinLength(1)
-  @MaxLength(MAX)
   usualBlocker!: string;
+
+  @Answer({
+    example: 'One small project online that someone other than me uses.',
+    description: 'What would be the first sign you are moving?',
+    optional: true,
+  })
+  firstOutcome?: string | null;
 }

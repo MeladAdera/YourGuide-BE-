@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { OnboardingRepository } from './onboarding.repository.js';
 import { ProfileController } from './profile.controller.js';
 import { ProfileRepository } from './profile.repository.js';
 import { ProfileService } from './profile.service.js';
@@ -18,6 +19,7 @@ import { ValuesRepository } from './sections/values/values.repository.js';
   providers: [
     ProfileService,
     ProfileRepository,
+    OnboardingRepository,
     SectionsService,
     BasicsRepository,
     SituationRepository,
