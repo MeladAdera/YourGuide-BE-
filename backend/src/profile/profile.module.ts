@@ -10,6 +10,8 @@ import { SectionsController } from './sections/sections.controller.js';
 import { SectionsService } from './sections/sections.service.js';
 import { SelfViewRepository } from './sections/self-view/self-view.repository.js';
 import { SituationRepository } from './sections/situation/situation.repository.js';
+import { MeaningRepository } from './sections/values/meaning.repository.js';
+import { ValuesRepository } from './sections/values/values.repository.js';
 
 @Module({
   controllers: [ProfileController, SectionsController],
@@ -23,6 +25,8 @@ import { SituationRepository } from './sections/situation/situation.repository.j
     PatternsRepository,
     SelfViewRepository,
     ConfidenceRepository,
+    MeaningRepository,
+    ValuesRepository,
   ],
 })
 export class ProfileModule {}

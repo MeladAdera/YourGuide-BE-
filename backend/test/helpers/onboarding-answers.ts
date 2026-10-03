@@ -49,3 +49,15 @@ export const CONFIDENCE = {
   avoidWhenAfraid: 3,
   compareTooMuch: 4,
 };
+
+// Picks on purpose not in alphabetical order, and one without a note.
+export const VALUES = {
+  values: [
+    { value: 'learning', note: 'The one thing nobody can take back.' },
+    { value: 'health' },
+    { value: 'independence', note: 'Deciding my own hours.' },
+  ],
+  personToBecome: 'Someone who finishes what he starts.',
+  wouldRegretNotDoing: 'Never building something of my own.',
+  rememberedFor: 'That I helped people get unstuck.',
+};

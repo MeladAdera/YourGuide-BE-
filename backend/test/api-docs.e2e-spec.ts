@@ -46,6 +46,7 @@ describe('API docs', () => {
       '/api/profile/sections/patterns',
       '/api/profile/sections/self-view',
       '/api/profile/sections/situation',
+      '/api/profile/sections/values',
     ]);
   });
 

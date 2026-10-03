@@ -7,7 +7,7 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | 1 | [Profile](#step-1--profile) | YOU-17 | Done |
 | 2 | [Onboarding: the database](#step-2--onboarding-the-database) | — | Done |
 | 3 | [Onboarding: screens 1–6](#step-3--onboarding-screens-16) | — | Done |
-| 4 | Onboarding: screen 7, values | — | Not started |
+| 4 | [Onboarding: screen 7, values](#step-4--onboarding-screen-7-values) | — | Done |
 | 5 | Onboarding: direction, completion and status | — | Not started |
 | 6 | Goals | YOU-18 | Not started |
 | 7 | Tasks | YOU-19 | Not started |
@@ -339,3 +339,116 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 3. **PUT /profile/sections/situation** → *Try it out* → remove the `satisfiedWith` line → *Execute* → `200`, with `satisfiedWith: null`.
 4. **PUT /profile/sections/confidence** → change one answer to `6` → `400`. Change it back → `200`.
 5. **GET /profile/sections/basics** → still `404`: screens are saved one by one.
+
+---
+
+## Step 4 — Onboarding: screen 7, values
+
+### Why
+
+Screen 7 asks "what matters to you?" twice: as two to five picks from a fixed list, and in the person's own words. It is the screen that turns reflection into direction, so its answers are half of the "why" behind the goal on screen 8, and the AI advice in week 6 can say "you told me family and learning matter most" instead of guessing.
+
+It is a step of its own because it is the one screen that writes **two tables**. The picks are many rows per user (`profile_values`), the free text is one row (`profile_meaning`), and a `PUT` must change both or neither. That is what a transaction is for, and this is the first place in the project that needs one, so it deserves its own explanation.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `src/profile/sections/values/life-values.ts` | Boundary | The ten values, mirrored from the `CHECK` constraint; the 2-to-5 limits |
+| `src/profile/sections/values/upsert-values.dto.ts` | Boundary | The screen as `PUT` sends it: a list of picks plus three answers |
+| `src/profile/sections/values/values.dto.ts` | Boundary | The screen as the API returns it |
+| `src/profile/sections/values/meaning.repository.ts` | Repository | `profile_meaning`: the usual select and upsert |
+| `src/profile/sections/values/values.repository.ts` | Repository | `profile_values`: read the set, replace the set |
+| `src/profile/sections/sections.service.ts` | Service | `getValues`, and `upsertValues` inside one transaction |
+| `src/profile/sections/sections.controller.ts` | Controller | `GET` and `PUT /api/profile/sections/values` |
+| `src/profile/answer.decorator.ts` | Boundary | `MAX_NOTE`, 300 characters for a note on a pick |
+| `test/profile-values.e2e-spec.ts` | Test | 18 e2e tests |
+
+### How it works
+
+**The request**
+
+```
+PUT /api/profile/sections/values
+Cookie: your_guide_session=<token>
+{
+  "values": [
+    { "value": "learning", "note": "The one thing nobody can take back." },
+    { "value": "health" }
+  ],
+  "personToBecome": "Someone who finishes what he starts.",
+  "wouldRegretNotDoing": "Never building something of my own."
+}
+
+200 OK
+{
+  "values": [
+    { "value": "health", "note": null },
+    { "value": "learning", "note": "The one thing nobody can take back." }
+  ],
+  "personToBecome": "…", "wouldRegretNotDoing": "…", "rememberedFor": null,
+  "updatedAt": "2026-10-03T20:10:00.000Z"
+}
+```
+
+The picks come back in alphabetical order, whatever order they were sent in. They are a set, not a ranking: `profile_values` has no position column, so the API cannot pretend to remember one.
+
+| Problem | Status |
+|---|---|
+| Fewer than 2 or more than 5 picks, a value picked twice, a value outside the list, a pick that is not an object, a note over 300 characters, an unknown field inside a pick | `400` |
+| Everything step 3 refuses: a missing or empty `personToBecome`, an answer over 1000 characters, an unknown field | `400` |
+
+**1. Validating a list of objects** (`upsert-values.dto.ts`)
+
+`values` is the first request field that is a list of objects, so it needs four decorators that the other screens do not: `@IsArray()` with `@ArrayMinSize(2)` and `@ArrayMaxSize(5)`; `@ArrayUnique(pickValue)`, which compares picks by their `value`; `@ValidateNested({ each: true })`, which runs `ValuePickDto`'s own rules on every item; and `@Type(() => ValuePickDto)` from class-transformer, which tells the validation pipe what class each item is. Without `@Type`, the items would stay plain objects and nested validation would silently check nothing.
+
+`pickValue` guards against a pick that is not an object (`"health"` or `null`): it returns the item itself, so uniqueness still works and `@ValidateNested` then refuses the item with `400` instead of the server crashing on `null.value`.
+
+The whitelist from week 1 applies inside the list too: `{ "value": "health", "rank": 1 }` is refused for the unknown field.
+
+**2. Replacing a set** (`values.repository.ts`)
+
+There is no "upsert a set" in SQL. `replace` deletes the user's picks and inserts the new ones:
+
+```sql
+DELETE FROM profile_values WHERE user_id = $1;
+
+INSERT INTO profile_values (user_id, value, note)
+SELECT $1, value, note
+  FROM unnest($2::text[], $3::text[]) AS picks(value, note);
+```
+
+`unnest` with two arrays produces one row per pair, so any number of picks is one `INSERT` with three parameters: the user, the array of values, the array of notes (with `null` where there is none). The alternative, building `($1, $2, $3), ($1, $4, $5), …` by hand, is longer and easier to get wrong.
+
+**3. The transaction** (`sections.service.ts`)
+
+`upsertValues` runs three repository calls inside `db.withTransaction` from week 1: upsert the free text, replace the picks, read the picks back. All three get the same `client`, so they are one transaction. If anything fails after the `DELETE`, PostgreSQL rolls back and the old picks are still there. Without the transaction a user could end up with free text and no picks, or with their picks deleted and nothing inserted.
+
+The read-back at the end is deliberate. It is one more query, but it means the response is exactly what the next `GET` will return, in the same order, from the same `SELECT`.
+
+**4. What makes the screen "saved"?** The `profile_meaning` row. `getValues` looks it up first and answers `404` if it is missing; the picks are then read with the same `userId`. The picks can never exist without the row, because they are written in the same transaction and the DTO demands at least two.
+
+**5. The tests** (`test/profile-values.e2e-spec.ts`)
+
+The same seven rules as step 3, plus the ones only this screen has:
+
+| Rule | Test |
+|---|---|
+| Picks come back sorted, with `null` notes | `saves the answers and returns the picks in alphabetical order` |
+| A second `PUT` replaces the whole set, the free text keeps one row | `replaces the whole set of picks on a second put` |
+| 1 pick, 6 picks, a duplicate, an unknown value, a non-object pick, a `null` pick, a long note, an unknown field in a pick | `rejects … with 400 and saves nothing` (12 cases) |
+
+### Check it
+
+```bash
+pnpm test:e2e
+```
+
+All 162 tests pass: 18 are new, in `test/profile-values.e2e-spec.ts`.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running), under the **onboarding** tag:
+
+1. **POST /auth/login** → *Execute*.
+2. **PUT /profile/sections/values** → *Try it out* → *Execute* with the example → `200`, picks in alphabetical order.
+3. Change one pick's `value` to the same as another → `400`, *values's elements must be unique*.
+4. In pgAdmin, `profile_values` has as many rows as picks; `profile_meaning` has one.

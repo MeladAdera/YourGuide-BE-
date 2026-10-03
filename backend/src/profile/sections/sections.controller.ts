@@ -22,6 +22,8 @@ import { SelfView } from './self-view/self-view.dto.js';
 import { UpsertSelfViewDto } from './self-view/upsert-self-view.dto.js';
 import { Situation } from './situation/situation.dto.js';
 import { UpsertSituationDto } from './situation/upsert-situation.dto.js';
+import { UpsertValuesDto } from './values/upsert-values.dto.js';
+import { Values } from './values/values.dto.js';
 
 const NOT_SAVED = 'This screen is not saved yet.';
 const BAD_INPUT =
@@ -165,5 +167,28 @@ export class SectionsController {
     @Body() dto: UpsertConfidenceDto,
   ): Promise<Confidence> {
     return this.sections.upsertConfidence(userId, dto);
+  }
+
+  @ApiOperation({ summary: 'Screen 7, what matters to you' })
+  @ApiOkResponse({ type: Values })
+  @ApiNotFoundResponse({ description: NOT_SAVED })
+  @Get('values')
+  getValues(@CurrentUser() userId: string): Promise<Values> {
+    return this.sections.getValues(userId);
+  }
+
+  @ApiOperation({
+    summary: 'Save screen 7, what matters to you (create or replace)',
+  })
+  @ApiOkResponse({ type: Values })
+  @ApiBadRequestResponse({
+    description: `${BAD_INPUT} Or fewer than 2 or more than 5 picks, a value picked twice, or a note longer than 300 characters.`,
+  })
+  @Put('values')
+  upsertValues(
+    @CurrentUser() userId: string,
+    @Body() dto: UpsertValuesDto,
+  ): Promise<Values> {
+    return this.sections.upsertValues(userId, dto);
   }
 }

@@ -11,6 +11,8 @@ export const MAX_ANSWER = 1000;
 export const MAX_LONG_ANSWER = 3000;
 /** A short label, such as an occupation. */
 export const MAX_SHORT_ANSWER = 120;
+/** A note on one picked value: a sentence or two. */
+export const MAX_NOTE = 300;
 
 interface AnswerOptions {
   example: string;

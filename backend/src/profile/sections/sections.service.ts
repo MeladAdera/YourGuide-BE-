@@ -18,11 +18,15 @@ import { UpsertSelfViewDto } from './self-view/upsert-self-view.dto.js';
 import { Situation } from './situation/situation.dto.js';
 import { SituationRepository } from './situation/situation.repository.js';
 import { UpsertSituationDto } from './situation/upsert-situation.dto.js';
+import { MeaningRepository } from './values/meaning.repository.js';
+import { UpsertValuesDto } from './values/upsert-values.dto.js';
+import { Values } from './values/values.dto.js';
+import { ValuesRepository } from './values/values.repository.js';
 
 /**
  * The onboarding screens. Each one is read and saved on its own, so a
  * person can stop half-way and come back. There is no rule here about the
- * order of screens 1–6; the order rule sits where it matters, on saving
+ * order of screens 1–7; the order rule sits where it matters, on saving
  * the direction (screen 8) in ProfileService.
  */
 @Injectable()
@@ -35,6 +39,8 @@ export class SectionsService {
     private readonly patterns: PatternsRepository,
     private readonly selfView: SelfViewRepository,
     private readonly confidence: ConfidenceRepository,
+    private readonly meaning: MeaningRepository,
+    private readonly values: ValuesRepository,
   ) {}
 
   getBasics(userId: string): Promise<Basics> {
@@ -92,6 +98,29 @@ export class SectionsService {
     input: UpsertConfidenceDto,
   ): Promise<Confidence> {
     return this.confidence.upsert(this.db.pool, userId, input);
+  }
+
+  /** Screen 7 is two tables: the free text says whether it is saved. */
+  async getValues(userId: string): Promise<Values> {
+    const meaning = await saved(
+      this.meaning.findByUserId(this.db.pool, userId),
+    );
+    const values = await this.values.findByUserId(this.db.pool, userId);
+    return { ...meaning, values };
+  }
+
+  /**
+   * One transaction for both tables. Without it, a failure between the
+   * two writes would leave a saved free text with no picks, or the old
+   * picks deleted and the new ones never inserted.
+   */
+  upsertValues(userId: string, input: UpsertValuesDto): Promise<Values> {
+    return this.db.withTransaction(async (client) => {
+      const meaning = await this.meaning.upsert(client, userId, input);
+      await this.values.replace(client, userId, input.values);
+      const values = await this.values.findByUserId(client, userId);
+      return { ...meaning, values };
+    });
   }
 }
 
