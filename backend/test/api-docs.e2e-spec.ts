@@ -40,6 +40,12 @@ describe('API docs', () => {
       '/api/auth/register',
       '/api/health',
       '/api/profile',
+      '/api/profile/sections/achievements',
+      '/api/profile/sections/basics',
+      '/api/profile/sections/confidence',
+      '/api/profile/sections/patterns',
+      '/api/profile/sections/self-view',
+      '/api/profile/sections/situation',
     ]);
   });
 
