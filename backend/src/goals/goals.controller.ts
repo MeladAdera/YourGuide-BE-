@@ -58,9 +58,16 @@ export class GoalsController {
     return this.goals.list(userId, query.archived === 'true');
   }
 
+  // The goal comes after the reflection: 409 until onboarding screens 2–7
+  // are saved. The wizard's last step is this very call, so the first goal
+  // is typed once and lives in one place.
   @ApiOperation({ summary: 'Create a goal, with why it matters' })
   @ApiCreatedResponse({ type: Goal })
   @ApiBadRequestResponse({ description: BAD_ANSWER })
+  @ApiConflictResponse({
+    description:
+      'Onboarding screens 2–7 are not all saved yet. The body lists them under `missing`.',
+  })
   @Post()
   create(
     @CurrentUser() userId: string,

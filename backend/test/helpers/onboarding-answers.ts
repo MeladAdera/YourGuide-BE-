@@ -1,7 +1,7 @@
 /**
  * Example answers for every onboarding screen, as PUT sends them. Shared by
- * the section tests and by the profile tests, which must save the required
- * screens before the direction (screen 8) is accepted.
+ * the section tests and by the profile and goals tests, which need
+ * onboarding to be complete before they start.
  */
 
 export const BASICS = {

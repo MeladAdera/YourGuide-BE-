@@ -3,8 +3,8 @@ import { Executor } from '../database/database.service.js';
 import { onlyRow } from '../database/only-row.js';
 import type { Screen } from './screens.js';
 
-/** Which screens have a row, and whether the direction (screen 8) has one. */
-export type SavedScreens = Record<Screen, boolean> & { direction: boolean };
+/** Which screens have a row. */
+export type SavedScreens = Record<Screen, boolean>;
 
 /**
  * One query answers "where is this person in onboarding?". A screen is
@@ -24,8 +24,7 @@ export class OnboardingRepository {
          EXISTS (SELECT 1 FROM profile_patterns     WHERE user_id = $1) AS patterns,
          EXISTS (SELECT 1 FROM profile_self_view    WHERE user_id = $1) AS "selfView",
          EXISTS (SELECT 1 FROM profile_confidence   WHERE user_id = $1) AS confidence,
-         EXISTS (SELECT 1 FROM profile_meaning      WHERE user_id = $1) AS values,
-         EXISTS (SELECT 1 FROM profiles             WHERE user_id = $1) AS direction`,
+         EXISTS (SELECT 1 FROM profile_meaning      WHERE user_id = $1) AS values`,
       [userId],
     );
     return onlyRow(rows, 'SELECT saved screens');

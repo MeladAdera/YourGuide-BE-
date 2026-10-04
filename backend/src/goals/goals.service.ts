@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service.js';
 import { isForeignKeyViolation } from '../database/pg-errors.js';
+import { ProfileService } from '../profile/profile.service.js';
 import {
   HAS_WORK_HISTORY,
   SESSION_STEP_FK,
@@ -19,13 +20,22 @@ export class GoalsService {
   constructor(
     private readonly db: DatabaseService,
     private readonly goals: GoalsRepository,
+    private readonly profile: ProfileService,
   ) {}
 
   list(userId: string, archived: boolean): Promise<Goal[]> {
     return this.goals.list(this.db.pool, userId, archived);
   }
 
-  create(userId: string, input: CreateGoalDto): Promise<Goal> {
+  /**
+   * The goal comes after the reflection: 409, with the screens still
+   * missing, until onboarding is complete. A goal written after the person
+   * has looked at what they can do, what they avoid and what matters is
+   * more specific and more their own. The order is a product rule, so it
+   * is enforced here and not left to the wizard.
+   */
+  async create(userId: string, input: CreateGoalDto): Promise<Goal> {
+    await this.profile.requireOnboarded(userId);
     return this.goals.create(this.db.pool, userId, input);
   }
 

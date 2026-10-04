@@ -6,9 +6,7 @@ import {
 import { DatabaseService } from '../database/database.service.js';
 import { OnboardingStatus } from './dto/onboarding-status.dto.js';
 import { Profile } from './dto/profile.dto.js';
-import { UpsertProfileDto } from './dto/upsert-profile.dto.js';
 import { OnboardingRepository } from './onboarding.repository.js';
-import { ProfileRepository } from './profile.repository.js';
 import { REQUIRED_SCREENS } from './screens.js';
 import { SectionsService } from './sections/sections.service.js';
 
@@ -16,38 +14,39 @@ import { SectionsService } from './sections/sections.service.js';
 export class ProfileService {
   constructor(
     private readonly db: DatabaseService,
-    private readonly profiles: ProfileRepository,
     private readonly onboarding: OnboardingRepository,
     private readonly sections: SectionsService,
   ) {}
 
+  /**
+   * The whole profile, once onboarding is complete. Until then 404: not an
+   * error in the data, this user has simply not finished the wizard, and
+   * the frontend shows it on this answer.
+   */
   async get(userId: string): Promise<Profile> {
-    const direction = await this.profiles.findByUserId(this.db.pool, userId);
-    if (direction === undefined) {
-      // Not an error in the data: this user has not done onboarding yet.
-      // The frontend shows the onboarding wizard on this answer.
+    const profile = await this.sections.findAll(userId);
+    if (REQUIRED_SCREENS.some((screen) => profile[screen] === null)) {
       throw new NotFoundException('Onboarding is not done yet.');
     }
-    return { ...direction, sections: await this.sections.findAll(userId) };
+    return profile;
   }
 
   /** Where the person is in onboarding. Never 404. */
   async status(userId: string): Promise<OnboardingStatus> {
-    const saved = await this.onboarding.savedScreens(this.db.pool, userId);
-    const { direction, ...screens } = saved;
-    return {
-      completed: direction,
-      screens,
-      missing: REQUIRED_SCREENS.filter((screen) => !saved[screen]),
-    };
+    const screens = await this.onboarding.savedScreens(this.db.pool, userId);
+    const missing = REQUIRED_SCREENS.filter((screen) => !screens[screen]);
+    return { completed: missing.length === 0, screens, missing };
   }
 
   /**
-   * Saves the direction and completes onboarding. This is where the one
-   * order rule lives: the goal comes after the reflection, so screens 2–7
-   * must exist first. 409, with the missing screens, otherwise.
+   * The one order rule: the goal comes after the reflection. Called before
+   * a goal is created; answers 409, with the screens still missing, until
+   * the six required screens are saved.
+   *
+   * A screen cannot be deleted, so once this passes for a user it always
+   * passes: there is no gap to close with a transaction.
    */
-  async upsert(userId: string, input: UpsertProfileDto): Promise<Profile> {
+  async requireOnboarded(userId: string): Promise<void> {
     const { missing } = await this.status(userId);
     if (missing.length > 0) {
       throw new ConflictException({
@@ -57,7 +56,5 @@ export class ProfileService {
         missing,
       });
     }
-    const direction = await this.profiles.upsert(this.db.pool, userId, input);
-    return { ...direction, sections: await this.sections.findAll(userId) };
   }
 }

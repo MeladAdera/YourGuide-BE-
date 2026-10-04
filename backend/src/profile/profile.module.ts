@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { OnboardingRepository } from './onboarding.repository.js';
 import { ProfileController } from './profile.controller.js';
-import { ProfileRepository } from './profile.repository.js';
 import { ProfileService } from './profile.service.js';
 import { AchievementsRepository } from './sections/achievements/achievements.repository.js';
 import { BasicsRepository } from './sections/basics/basics.repository.js';
@@ -18,7 +17,6 @@ import { ValuesRepository } from './sections/values/values.repository.js';
   controllers: [ProfileController, SectionsController],
   providers: [
     ProfileService,
-    ProfileRepository,
     OnboardingRepository,
     SectionsService,
     BasicsRepository,
@@ -30,5 +28,8 @@ import { ValuesRepository } from './sections/values/values.repository.js';
     MeaningRepository,
     ValuesRepository,
   ],
+  // Exported for GoalsModule: a goal can only be created once onboarding
+  // is complete, and ProfileService is the one place that knows.
+  exports: [ProfileService],
 })
 export class ProfileModule {}

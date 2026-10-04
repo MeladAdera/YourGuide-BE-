@@ -8,6 +8,8 @@
 >
 > **Changed 2026-10-04:** `goals.archived_at` (section 6), and `sessions.step_id` no longer cascades, so work history cannot be deleted (sections 9 and 13), in migration `0004_goal-archive-and-work-history.sql`.
 >
+> **Changed 2026-10-04 (2):** a goal carries `why_it_matters`, `obstacle` and `first_outcome` (migration `0005_goal-why.sql`). The `profiles` table is gone: its rows became goals (migration `0006_direction-into-goals.sql`). Sections 5 and 6.
+>
 > **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
@@ -32,8 +34,7 @@ the SQL migrations.
 ```text
 User
  │
- ├──── Profile (1:1)                onboarding screen 8: your direction
- ├──── Profile screens (1:1 each)   onboarding screens 1–7, one table each
+ ├──── Profile screens (1:1 each)   the seven onboarding screens, one table each
  ├──── Profile values (1:N)         the picks on screen 7
  │
  ├──── Auth Sessions (1:N)
@@ -138,9 +139,11 @@ A user can be logged in from multiple browsers/devices.
 
 ------------------------------------------------------------------------
 
-# 5. profiles and the onboarding screens
+# 5. The profile: the onboarding screens
 
-Onboarding is eight screens, in this order:
+The profile is what the app knows about the **person**: who they are,
+where they are now, what matters to them. It is seven screens, in this
+order, and each screen is its own table:
 
 ```text
 1  Basics                 profile_basics        optional screen
@@ -151,14 +154,30 @@ Onboarding is eight screens, in this order:
 6  Quick check-in         profile_confidence    required
 7  What matters to you    profile_meaning       required
                           profile_values        the picks, 2–5 rows
-8  Your direction         profiles              required, saved last
 ```
 
-Screen 8 is the `profiles` table. Screens 1–7 each have their own table.
-The goal is asked last on purpose: after a person has recalled what they
+Onboarding is complete when the six required screens are saved. Then the
+wizard asks for the first **goal**, and that is an ordinary row in
+`goals` (section 6): where the person wants to go, why it matters, what
+might get in the way, the first outcome. The API refuses to create a
+goal before the six screens exist.
+
+The goal comes last on purpose: after a person has recalled what they
 can do, named what they avoid and chosen what matters, the goal they
 write is more specific and more their own. `PROJECT.md` §6.1 has the
-screens; `DECISIONS.md` (2026-10-03) has the reasoning.
+screens; `DECISIONS.md` (2026-10-03 and 2026-10-04) has the reasoning.
+
+### Why is there no `profiles` table?
+
+There was one until 2026-10-04. It held "screen 8, your direction": a
+goal, why it matters, the usual blocker, the first outcome. Every one of
+those describes a goal, not the person, and the `goals` table already
+existed. A user who had saved the seven screens and created a goal was
+then asked to type the same things again. Migration `0006` turned every
+saved direction into a goal and dropped the table.
+
+"Onboarding complete" needs no row of its own either. It is "the six
+required screen rows exist", answered by one query.
 
 ### Why one table per screen?
 
@@ -193,55 +212,6 @@ updated_at  when the screen was last saved
 -   The same value picked twice by one user (primary key).
 -   A diagnosis derived from any of these rows. That is an application
     rule, not a constraint: the app never states or stores one.
-
-## 5.0 profiles — screen 8, your direction
-
-```sql
-CREATE TABLE profiles (
-  user_id UUID PRIMARY KEY
-    REFERENCES users(id)
-    ON DELETE CASCADE,
-
-  goal TEXT NOT NULL,
-
-  why_it_matters TEXT NOT NULL,
-
-  usual_blocker TEXT NOT NULL,
-
-  -- "What would be the first sign you are moving?" Optional.
-  first_outcome TEXT,
-
-  -- When onboarding was finished. Set once, never updated.
-  completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-### Why does it exist?
-
-It holds the user's **direction**: the long-term aim, why it matters,
-what usually gets in the way, and the first outcome they want to see.
-The AI advice is built on it, and every goal in the `goals` table is a
-concrete objective under it.
-
-### Main rules
-
--   This row is also the sign that onboarding is complete. `GET
-    /api/profile` answers `404` until it exists.
--   The API refuses to create it until the required screens (2–7) are
-    saved. The order is a product rule, so it lives in the backend.
--   `completed_at` is set when the row is created; later edits only move
-    `updated_at`.
-
-### Relationship
-
-```text
-User 1 ───── 1 Profile
-```
-
-`user_id` is both the primary key and foreign key because each user has
-one profile.
 
 ## 5.1 profile_basics — screen 1, basics
 
@@ -506,7 +476,7 @@ CREATE TABLE profile_meaning (
 ### Why does it exist?
 
 "What matters to me?" The answers here are half of the "why" behind the
-goal on screen 8.
+first goal.
 
 ## 5.8 profile_values — screen 7, the picks
 
@@ -618,13 +588,22 @@ The same reason as `steps.done_at`: the timestamp answers "is it
 archived?" and "since when?" with one column, and the second question
 costs nothing to keep.
 
+### Why does a goal carry its own why?
+
+"It knows my goal and why it matters to me" is what the app is built
+on, and a person can have more than one goal. Advice for a hard moment
+on one goal must use that goal's why, not another's. So the why is a
+column here, and it is required. `obstacle` and `first_outcome` are
+optional: what might get in the way of this goal, and the first sign of
+moving.
+
 ### How does a goal relate to the profile?
 
-The profile (section 5.0) holds the user's **direction**: the long-term
-aim written at the end of onboarding. A goal is a concrete objective
-under that direction. There is no foreign key between them, and no goal
-is created automatically: the frontend offers to turn the direction into
-a first goal, and that is an ordinary insert here.
+The profile (section 5) is about the person; a goal is about where they
+want to go. There is no foreign key between them. The link is a rule in
+the API: a goal cannot be created until the six required screens are
+saved. The first goal is the last step of the onboarding wizard, and it
+is an ordinary insert here, like every later goal.
 
 ------------------------------------------------------------------------
 
@@ -975,7 +954,7 @@ This history becomes the initial "memory" of Your Guide.
               │               │                │
               ▼               ▼                ▼
         ┌──────────┐   ┌─────────────┐   ┌─────────┐
-        │ profiles │   │auth_sessions│   │  goals  │
+        │profile_* │   │auth_sessions│   │  goals  │
         └──────────┘   └─────────────┘   └────┬────┘
                                               │
                                               ▼
@@ -1000,8 +979,8 @@ This history becomes the initial "memory" of Your Guide.
                                        └───────────┘
 ```
 
-The seven onboarding screen tables and `profile_values` sit next to
-`profiles`: each has its own foreign key to `users` (section 5).
+`profile_*` stands for the seven onboarding screen tables and
+`profile_values`: each has its own foreign key to `users` (section 5).
 
 ------------------------------------------------------------------------
 
@@ -1012,7 +991,7 @@ Every table containing user data has `user_id`.
 Current ownership columns:
 
 ```text
-profiles.user_id            (and the eight profile_* tables)
+profile_*.user_id           (the eight onboarding tables)
 goals.user_id
 tasks.user_id
 steps.user_id
@@ -1183,6 +1162,7 @@ domain requires it.
 | Deleting a goal deletes its tasks and steps | ON DELETE CASCADE |
 | A step with sessions cannot be deleted, nor the task or goal above it | Foreign key with no ON DELETE action |
 | A goal is active or archived | `archived_at` is NULL or a timestamp |
+| Every goal has a why | NOT NULL |
 | Deleting a session keeps its struggle history | ON DELETE SET NULL |
 | One row per user for each onboarding screen | `user_id` is the primary key |
 | Required answers of a screen are present | NOT NULL |
@@ -1271,7 +1251,6 @@ The current v1 model is:
 ```text
 users
 auth_sessions
-profiles
 profile_basics
 profile_situation
 profile_achievements

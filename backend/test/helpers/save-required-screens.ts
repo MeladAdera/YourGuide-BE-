@@ -21,8 +21,9 @@ export const REQUIRED_SCREEN_ANSWERS = [
 ] as const;
 
 /**
- * Saves screens 2–7 for the logged-in user, so PUT /api/profile (the
- * direction) is accepted. Basics is optional and is not saved here.
+ * Saves screens 2–7 for the logged-in user. Onboarding is then complete:
+ * GET /api/profile answers 200 and POST /api/goals is accepted. Basics is
+ * optional and is not saved here.
  */
 export async function saveRequiredScreens(
   app: INestApplication<App>,

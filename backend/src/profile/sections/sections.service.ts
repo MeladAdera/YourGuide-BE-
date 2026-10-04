@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service.js';
-import { ProfileSections } from '../dto/profile.dto.js';
+import { Profile } from '../dto/profile.dto.js';
 import { Achievements } from './achievements/achievements.dto.js';
 import { AchievementsRepository } from './achievements/achievements.repository.js';
 import { UpsertAchievementsDto } from './achievements/upsert-achievements.dto.js';
@@ -27,8 +27,8 @@ import { ValuesRepository } from './values/values.repository.js';
 /**
  * The onboarding screens. Each one is read and saved on its own, so a
  * person can stop half-way and come back. There is no rule here about the
- * order of screens 1–7; the order rule sits where it matters, on saving
- * the direction (screen 8) in ProfileService.
+ * order of screens 1–7; the order rule sits where it matters, on creating
+ * a goal (GoalsService asks ProfileService.requireOnboarded).
  */
 @Injectable()
 export class SectionsService {
@@ -129,7 +129,7 @@ export class SectionsService {
    * saved is null, never 404: the profile exists even if basics was
    * skipped. The seven lookups run in parallel on the pool.
    */
-  async findAll(userId: string): Promise<ProfileSections> {
+  async findAll(userId: string): Promise<Profile> {
     const pool = this.db.pool;
     const [
       basics,

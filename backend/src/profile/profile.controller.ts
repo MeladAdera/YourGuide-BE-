@@ -1,7 +1,5 @@
-import { Body, Controller, Get, Put } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
 import {
-  ApiBadRequestResponse,
-  ApiConflictResponse,
   ApiCookieAuth,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -12,9 +10,12 @@ import {
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { OnboardingStatus } from './dto/onboarding-status.dto.js';
 import { Profile } from './dto/profile.dto.js';
-import { UpsertProfileDto } from './dto/upsert-profile.dto.js';
 import { ProfileService } from './profile.service.js';
 
+// Reading only. The profile is written one screen at a time, through
+// PUT /profile/sections/<screen> (SectionsController). There is no
+// PUT /profile: what it used to save, the direction, is a goal now.
+//
 // No @Public() anywhere here: every route needs a login. The decorators on
 // the class apply to every route in it.
 @ApiTags('profile')
@@ -24,11 +25,12 @@ import { ProfileService } from './profile.service.js';
 export class ProfileController {
   constructor(private readonly profiles: ProfileService) {}
 
-  @ApiOperation({
-    summary: 'Your whole profile: the direction and every saved screen',
-  })
+  @ApiOperation({ summary: 'Your whole profile: the seven onboarding screens' })
   @ApiOkResponse({ type: Profile })
-  @ApiNotFoundResponse({ description: 'Onboarding is not done yet.' })
+  @ApiNotFoundResponse({
+    description:
+      'Onboarding is not done yet: a required screen (2–7) is not saved.',
+  })
   @Get()
   get(@CurrentUser() userId: string): Promise<Profile> {
     return this.profiles.get(userId);
@@ -39,29 +41,5 @@ export class ProfileController {
   @Get('onboarding')
   status(@CurrentUser() userId: string): Promise<OnboardingStatus> {
     return this.profiles.status(userId);
-  }
-
-  // PUT, not POST: there is one profile per user and the client always sends
-  // the whole thing. The same call creates it the first time and replaces it
-  // after that, so the client never has to ask "did I onboard already?".
-  @ApiOperation({
-    summary:
-      'Save screen 8, your direction (create or replace). Completes onboarding.',
-  })
-  @ApiOkResponse({ type: Profile })
-  @ApiBadRequestResponse({
-    description:
-      'A missing or empty answer, an answer that is too long, or an unknown field.',
-  })
-  @ApiConflictResponse({
-    description:
-      'Screens 2–7 are not all saved yet. The body lists them under `missing`.',
-  })
-  @Put()
-  upsert(
-    @CurrentUser() userId: string,
-    @Body() dto: UpsertProfileDto,
-  ): Promise<Profile> {
-    return this.profiles.upsert(userId, dto);
   }
 }

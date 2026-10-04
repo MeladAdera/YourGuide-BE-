@@ -5,7 +5,9 @@ import request, { Response } from 'supertest';
 import { App } from 'supertest/types.js';
 import { DatabaseService } from '../src/database/database.service.js';
 import { createTestApp } from './helpers/create-test-app.js';
+import { BASICS, SITUATION } from './helpers/onboarding-answers.js';
 import { resetRateLimits } from './helpers/reset-rate-limit.js';
+import { saveRequiredScreens } from './helpers/save-required-screens.js';
 import { cookieHeader, sessionToken } from './helpers/session-cookie.js';
 
 const USER = {
@@ -119,10 +121,12 @@ describe('/api/goals', () => {
     await app.close();
   });
 
-  // Every test starts with one logged-in user who has no goals.
+  // Every test starts with one logged-in user who has saved the reflection
+  // screens (a goal cannot be created before them) and has no goals yet.
   beforeEach(async () => {
     resetRateLimits(app);
     ({ cookie, userId } = await register(USER.email));
+    await saveRequiredScreens(app, cookie);
   });
 
   it('creates a goal with its why and lists it as active', async () => {
@@ -148,6 +152,49 @@ describe('/api/goals', () => {
 
     expect(created.status).toBe(201);
     expect(created.body).toMatchObject({ obstacle: null, firstOutcome: null });
+  });
+
+  it('refuses a goal until the reflection screens are saved: 409', async () => {
+    const fresh = await register('fresh@example.com');
+    const as = fresh.cookie;
+    const create = (): Promise<Response> =>
+      call('post', '', { as, body: GOAL });
+    const saveScreen = (screen: string, answers: object): Promise<Response> =>
+      request(app.getHttpServer())
+        .put(`/api/profile/sections/${screen}`)
+        .set('Cookie', as)
+        .send(answers);
+
+    const refused = await create();
+
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({
+      statusCode: 409,
+      error: 'Conflict',
+      message: 'Finish these screens first.',
+      missing: [
+        'situation',
+        'achievements',
+        'patterns',
+        'selfView',
+        'confidence',
+        'values',
+      ],
+    });
+
+    // One screen saved: still refused, and the list shrinks.
+    await saveScreen('situation', SITUATION);
+    expect((await create()).body).toMatchObject({
+      missing: ['achievements', 'patterns', 'selfView', 'confidence', 'values'],
+    });
+
+    // Basics is optional: saving it changes nothing here.
+    await saveScreen('basics', BASICS);
+    expect((await create()).status).toBe(409);
+    expect((await call('get', '', { as })).body).toEqual([]);
+
+    await saveRequiredScreens(app, as);
+    expect((await create()).status).toBe(201);
   });
 
   it('lists goals in the order they were created', async () => {

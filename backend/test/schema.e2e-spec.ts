@@ -80,7 +80,7 @@ describe('Database schema', () => {
     await app.close();
   });
 
-  it('has the 16 tables from SCHEMA.md', async () => {
+  it('has the 15 tables from SCHEMA.md', async () => {
     const { rows } = await pool.query<{ tablename: string }>(
       `SELECT tablename FROM pg_tables
         WHERE schemaname = 'public' AND tablename <> 'pgmigrations'
@@ -98,7 +98,6 @@ describe('Database schema', () => {
       'profile_self_view',
       'profile_situation',
       'profile_values',
-      'profiles',
       'sessions',
       'steps',
       'struggles',

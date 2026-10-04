@@ -12,11 +12,6 @@ const USER = {
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
 };
-const DIRECTION = {
-  goal: 'Become a stronger full-stack developer',
-  whyItMatters: 'I want to build my own products.',
-  usualBlocker: 'I feel lost and switch to something easier.',
-};
 const NOTHING_SAVED = {
   completed: false,
   screens: {
@@ -55,11 +50,11 @@ describe('GET /api/profile/onboarding', () => {
     return asCookie === null ? req : req.set('Cookie', asCookie);
   }
 
-  function put(path: string, body: object): Promise<Response> {
+  function saveScreen(screen: string, answers: object): Promise<Response> {
     return request(app.getHttpServer())
-      .put(path)
+      .put(`/api/profile/sections/${screen}`)
       .set('Cookie', cookie)
-      .send(body);
+      .send(answers);
   }
 
   beforeAll(async () => {
@@ -83,8 +78,8 @@ describe('GET /api/profile/onboarding', () => {
   });
 
   it('reports each screen as it is saved', async () => {
-    await put('/api/profile/sections/basics', BASICS);
-    await put('/api/profile/sections/situation', SITUATION);
+    await saveScreen('basics', BASICS);
+    await saveScreen('situation', SITUATION);
 
     const response = await status();
 
@@ -96,19 +91,12 @@ describe('GET /api/profile/onboarding', () => {
     });
   });
 
-  it('is complete once the direction is saved', async () => {
+  it('is complete once the six required screens are saved', async () => {
     await saveRequiredScreens(app, cookie);
-    expect((await status()).body).toMatchObject({
-      completed: false,
-      missing: [],
-    });
-
-    await put('/api/profile', DIRECTION);
 
     expect((await status()).body).toEqual({
       completed: true,
       screens: {
-        ...NOTHING_SAVED.screens,
         basics: false,
         situation: true,
         achievements: true,
@@ -122,7 +110,7 @@ describe('GET /api/profile/onboarding', () => {
   });
 
   it('shows each user only their own progress', async () => {
-    await put('/api/profile/sections/situation', SITUATION);
+    await saveScreen('situation', SITUATION);
     const otherCookie = await registerAndGetCookie('other@example.com');
 
     expect((await status(otherCookie)).body).toEqual(NOTHING_SAVED);

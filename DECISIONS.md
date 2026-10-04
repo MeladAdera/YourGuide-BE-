@@ -79,6 +79,8 @@ The profile grew from three answers (goal, why, usual blocker) to eight screens:
 
 **Cost:** onboarding takes ten to fifteen minutes instead of two, and nothing in the app works until it is done. We accept that: the advice the app gives later is only as good as what it knows.
 
+**Changed 2026-10-04:** screen 8 is no longer a profile screen. It is the first goal, created with `POST /api/goals`, and the 409 moved there. See the entry of that date.
+
 ## 2026-10-03 — One table per onboarding screen
 
 Each of screens 1–7 is its own table (`profile_basics` … `profile_meaning`, plus `profile_values` for the picks); screen 8 stays in `profiles`, which gains `first_outcome` and `completed_at`. Migration `0003_onboarding-sections.sql`; `SCHEMA.md` §5.
@@ -88,6 +90,8 @@ Each of screens 1–7 is its own table (`profile_basics` … `profile_meaning`, 
 **Rejected:** one wide `profiles` with about forty nullable columns (required would live only in code, and one forty-field DTO); a generic `profile_answers (question_key, answer)` table and JSONB per screen (both take the rules out of the database, against every decision above).
 
 **Cost:** eight similar tables, the same upsert written eight times, and a full profile read that touches all of them. Adding a question is a migration plus a DTO field, which is what we want: the question list is part of the schema, not data.
+
+**Changed 2026-10-04:** the `profiles` table was dropped (migration `0006`); its rows became goals. The seven screen tables and `profile_values` are unchanged.
 
 ## 2026-10-03 — The check-in stores answers, never a score; the app never diagnoses
 
@@ -115,4 +119,26 @@ Planning (goals, tasks, steps) can be deleted; a focus session cannot, because i
 
 `POST /goals/:id/archive` and `/unarchive`, not `PATCH` with an `archived` field: archiving is something that happens to a goal, with its own rule, not a value the client sets. `PATCH /goals/:id` stays "rename" and nothing else.
 
-A goal and the profile's direction are not linked in the database. The direction is the long-term aim from onboarding; a goal is a concrete objective under it. The frontend offers to turn the direction into the first goal; the backend creates nothing automatically.
+A goal is not linked to the profile in the database. (This entry first described a separate "direction" on the profile. That was removed the same day: see the next entry.)
+
+## 2026-10-04 — Screen 8 is the first goal; every goal carries its own why
+
+Found by using the API, one day after building it. With the seven screens saved and a goal created, `PUT /api/profile` ("screen 8, your direction") asked for a goal, a why and a blocker again. Every field on screen 8 described a goal, not the person, and `goals` already existed: two homes for one thing. The cause: the three original profile fields were kept as "screen 8" so the old route would not break, and then goals arrived with their own title.
+
+**Now:** `goals` has `why_it_matters` (required), `obstacle` and `first_outcome` (optional). The wizard's last step is `POST /api/goals`, the same call as for every later goal. `PUT /api/profile` and the `profiles` table are gone; migrations `0005` and `0006` turned every saved direction into a goal first. The profile is the seven screens about the person, and onboarding is complete when the six required ones are saved.
+
+**The order rule moved; it did not go away.** `POST /api/goals` answers 409 with the missing screens until onboarding is complete. That also settles the question left open in `PROJECT.md` §12: the backend, not only the frontend, refuses a goal before the reflection.
+
+**Why a why per goal:** before, only the profile had one, so a second goal had none and advice for it would have used the wrong why. `usual_blocker` became the optional `obstacle` of a goal: the general "what gets in the way" is screen 4; this is what might get in the way of *this* goal.
+
+**`PATCH /api/goals/:id` changes only what is sent.** A goal is edited one field at a time, unlike a screen, which is saved whole with `PUT`. Left out means unchanged; `null` clears an optional answer and is refused for a required one.
+
+**Cost:** part of the previous day's work was rebuilt (the 409 on the profile, `completed_at`, the nested `sections` in `GET /api/profile`). `completed_at` went with the table; nothing read it. Before tasks and the frontend build on goals was the cheap moment to do it.
+
+**Lesson kept:** the overlap was invisible in the design and obvious in the first five minutes of use. Try each step through Swagger as a user would before building the next one on top of it.
+
+## 2026-10-04 — Every example in the API docs is sent to the API by a test
+
+The "Check it" steps in `docs/` say *Try it out → Execute*. For screen 7 that failed: the list of picks had no example of its own, so Swagger repeated the one example pick, and the API rightly refuses a value picked twice. Sixteen optional text fields were also published as `object`, because a `string | null` property has no single runtime type.
+
+`test/api-docs-examples.e2e-spec.ts` builds each request body the way Swagger UI does and sends it to the real API, and checks that a field with a text example is published as a string. Run against the code as it was, it reproduces both defects. A list field gets its own `example`; `@Answer` states `type: String`.

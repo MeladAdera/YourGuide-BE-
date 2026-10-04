@@ -10,9 +10,10 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | 4 | [Onboarding: screen 7, values](#step-4--onboarding-screen-7-values) | YOU-51 | Done |
 | 5 | [Onboarding: direction, completion and status](#step-5--onboarding-direction-completion-and-status) | YOU-52 | Done |
 | 6 | [Goals](#step-6--goals) | YOU-18 | Done |
-| 7 | Tasks | YOU-19 | Not started |
+| 7 | [The direction moves onto goals](#step-7--the-direction-moves-onto-goals) | YOU-53 | Done |
+| 8 | Tasks | YOU-19 | Not started |
 
-Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues, YOU-49 to YOU-52, were created from that design.
+Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues, YOU-49 to YOU-52, were created from that design. Step 7 was added on 2026-10-04, after using the API showed that screen 8 and goals were two homes for one thing.
 
 All commands on this page run inside `backend/`.
 
@@ -20,7 +21,7 @@ All commands on this page run inside `backend/`.
 
 ## Step 1 — Profile
 
-> **Changed in step 5.** `PUT /api/profile` is now screen 8 of eight: it is refused with `409` until screens 2–7 are saved, it takes an optional `firstOutcome`, and `GET /api/profile` returns every screen under `sections`. The text below describes step 1 as it was built. Its *Why* still holds, and the pattern it set is the one every screen table copied.
+> **Changed in steps 5 and 7.** This route pair no longer exists in this form. The three answers it saved describe a goal, so since step 7 they are fields of a goal (`POST /api/goals`), and `GET /api/profile` returns the seven onboarding screens. The text below describes step 1 as it was built. Its *Why* still holds, and the pattern it set is the one every screen table and the goals module copied.
 
 ### Why
 
@@ -163,6 +164,8 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 ---
 
 ## Step 2 — Onboarding: the database
+
+> **Changed in step 7.** The `profiles` table, and the two columns this step added to it, are gone: screen 8 became the first goal. Everything below about the seven screen tables and `profile_values` is unchanged.
 
 ### Why
 
@@ -459,6 +462,8 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 
 ## Step 5 — Onboarding: direction, completion and status
 
+> **Changed in step 7.** The 409 rule now guards `POST /api/goals`. `PUT /api/profile` is removed, `GET /api/profile` returns the seven screens at the top level with no `sections` and no `completedAt`, and `completed` means the six required screens are saved. `GET /api/profile/onboarding` works as described here. Read this step for the reasoning, and step 7 for how it looks now.
+
 ### Why
 
 Three things were still missing after steps 2 to 4:
@@ -591,6 +596,8 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 ---
 
 ## Step 6 — Goals
+
+> **Changed in step 7.** A goal now also has `whyItMatters`, `obstacle` and `firstOutcome`. `PATCH` changes any of them, not only the title, and `POST` is refused with 409 before onboarding is complete. The delete rule, the ownership pattern and archive, described below, are unchanged.
 
 ### Why
 
@@ -752,3 +759,184 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 7. **DELETE /goals/{id}** → `204`. **GET /goals** → `[]`.
 
 The `409` needs a focus session, and sessions have no route until week 5. Until then the test *refuses to delete a goal with a session* is where to see it.
+
+---
+
+## Step 7 — The direction moves onto goals
+
+### Why
+
+This step exists because the app was used. With the seven reflection screens saved and a goal created, the next call, `PUT /api/profile`, asked for a goal, why it matters and what blocks it. All of that had just been given.
+
+| Screen 8 asked for | It already lived in |
+|---|---|
+| `goal` | the goal created with `POST /api/goals` |
+| `usualBlocker` | screen 4, "what do you keep postponing or avoiding" |
+| `whyItMatters` | nowhere else, but it is the why *of a goal* |
+| `firstOutcome` | nowhere else, but it is the first outcome *of a goal* |
+
+Every field on screen 8 described a goal, not the person, and a `goals` table already existed. Two homes for one thing causes three problems:
+
+- **Typed twice.** The same goal in the profile and in `goals`.
+- **Only one why.** The why sat on the profile, so a second goal had none. Advice for a hard moment on goal two would have used goal one's why.
+- **"Unfinished" with everything there.** A user with seven screens and a goal was still not onboarded, because one more route had not been called.
+
+How did it happen? In step 5 the three original answers from step 1 were kept as "screen 8" so the old route would not break. In step 6 goals arrived with their own title. Each step was reasonable alone; together they overlapped. It was invisible in the design and obvious in the first five minutes of use, which is the lesson: **try each step through Swagger as a user would, before building the next one on top of it.**
+
+### What we built
+
+Three commits, each with every test passing.
+
+| Commit | What |
+|---|---|
+| 1 | The Swagger examples fixed, and a test that sends every one of them to the API |
+| 2 | A goal carries its own why, obstacle and first outcome; `PATCH` changes only what is sent |
+| 3 | The direction leaves the profile: the 409 rule moves to `POST /api/goals`, `PUT /api/profile` and the `profiles` table are removed |
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0005_goal-why.sql` | Database | `goals.why_it_matters` (required), `obstacle`, `first_outcome` |
+| `migrations/0006_direction-into-goals.sql` | Database | Every saved direction becomes a goal; `profiles` is dropped |
+| `src/goals/dto/create-goal.dto.ts` | Boundary | A new goal: title, why, optional obstacle and first outcome |
+| `src/goals/dto/update-goal.dto.ts` | Boundary | `PATCH`: any of the four, each one optional |
+| `src/goals/goals.repository.ts` | Repository | `create` with four answers; `update` replaces `rename` |
+| `src/goals/goals.service.ts` | Service | `create` asks `ProfileService.requireOnboarded` first |
+| `src/goals/goals.module.ts` | Module | Imports `ProfileModule` |
+| `src/profile/profile.service.ts` | Service | `get`, `status`, and the order rule `requireOnboarded` |
+| `src/profile/profile.controller.ts` | Controller | Reading only: `GET /profile`, `GET /profile/onboarding` |
+| `src/profile/dto/profile.dto.ts` | Boundary | The profile is the seven screens |
+| `src/profile/onboarding.repository.ts` | Repository | Seven `EXISTS`, no direction |
+| `src/common/answer.decorator.ts` | Boundary | Moved out of `profile/`: goals use it too. States `type: String` |
+| `test/api-docs-examples.e2e-spec.ts` | Test | Every documented request example is accepted by the API |
+| `test/goals.e2e-spec.ts`, `test/profile.e2e-spec.ts`, `test/profile-onboarding.e2e-spec.ts` | Test | Rewritten for the new shape |
+
+Removed: `src/profile/profile.repository.ts`, `src/profile/dto/upsert-profile.dto.ts`, `src/goals/dto/goal-title.dto.ts`.
+
+### How it works
+
+**The shape now**
+
+```text
+PUT /api/profile/sections/<screen>   × 7     who am I · where am I now · what matters
+        ↓   the six required screens saved = onboarding complete
+POST /api/goals                              where do I want to go · why
+        ↓
+tasks, steps, sessions                       what next
+```
+
+The wizard still ends with the goal. The difference is where it is stored: the last step is the ordinary create-goal call, the same one used for every later goal.
+
+```
+POST /api/goals
+{ "title": "Ship my first product",
+  "whyItMatters": "I want to build my own products without waiting for anyone.",
+  "obstacle": "I open the editor, feel lost, and switch to something easier.",
+  "firstOutcome": "One small project online that someone other than me uses." }
+
+201 Created
+{ "id": "5b0c…", "title": "…", "whyItMatters": "…", "obstacle": "…", "firstOutcome": "…",
+  "createdAt": "2026-10-04T09:10:00.000Z", "archivedAt": null }
+```
+
+```
+POST /api/goals                              (a required screen is not saved yet)
+
+409 Conflict
+{ "statusCode": 409, "error": "Conflict", "message": "Finish these screens first.",
+  "missing": ["patterns", "selfView", "confidence", "values"] }
+```
+
+```
+GET /api/profile                             (404 until the six required screens are saved)
+
+200 OK
+{ "basics": null, "situation": { … }, "achievements": { … }, "patterns": { … },
+  "selfView": { … }, "confidence": { … }, "values": { … } }
+```
+
+**1. A goal's own why** (`migrations/0005_goal-why.sql`)
+
+`why_it_matters` is `NOT NULL`: "it knows my goal and why it matters to me" is what the app is built on, so a goal without a why is not allowed to exist. `obstacle` and `first_outcome` are optional.
+
+Adding a `NOT NULL` column to a table that already has rows takes three statements: add it nullable, fill the existing rows, then set `NOT NULL`. Existing goals take the why from their owner's profile. Where there was none, they get the text `Not written yet.` There are no real users, so that placeholder can only appear on a goal in a developer's own database, created before this migration.
+
+`usual_blocker` did not move as it was. The general "what gets in the way" is screen 4. A goal's `obstacle` is narrower: what might get in the way of *this* goal.
+
+**2. A PATCH that changes only what is sent** (`update-goal.dto.ts`, `goals.repository.ts`)
+
+An onboarding screen is saved whole, so it uses `PUT`. A goal is edited one field at a time: renamed in a list, its why rewritten on its page. That is what `PATCH` means:
+
+| In the body | Result |
+|---|---|
+| field left out | unchanged |
+| a value | replaced |
+| `null` | cleared, for `obstacle` and `firstOutcome` only; `400` for `title` and `whyItMatters` |
+
+It is one statement:
+
+```sql
+UPDATE goals
+   SET title          = COALESCE($3::text, title),
+       why_it_matters = COALESCE($4::text, why_it_matters),
+       obstacle       = CASE WHEN $5::boolean THEN $6::text ELSE obstacle END,
+       first_outcome  = CASE WHEN $7::boolean THEN $8::text ELSE first_outcome END
+ WHERE id = $2 AND user_id = $1
+ RETURNING …
+```
+
+Two different tricks, for a reason. The required answers cannot be cleared, so "not sent" can travel as `NULL` and `COALESCE` keeps the old value. The optional answers *can* be cleared, so `NULL` already means "clear it" and cannot also mean "not sent". Each of those travels as a pair: a flag saying whether it was sent, and the value.
+
+In the DTO the same difference shows up as two decorators. `@IsOptional()` skips validation for a missing field **and for `null`**, which is right for the optional answers. For the required ones it would be wrong: `{ "title": null }` would pass validation and then be silently ignored. `@ValidateIf(value !== undefined)` skips only a field that is really absent, so `null` reaches `@IsString()` and is refused.
+
+**3. The order rule moves** (`profile.service.ts`, `goals.service.ts`)
+
+"The goal comes after the reflection" is still a backend rule. It used to guard `PUT /api/profile`; now `GoalsService.create` calls `ProfileService.requireOnboarded` first, which answers `409` with the missing screens. `ProfileModule` exports `ProfileService` and `GoalsModule` imports it: the one place that knows what "onboarded" means is asked, not copied.
+
+No transaction is needed between the check and the insert. A screen cannot be deleted, so once the check passes for a user it passes forever; there is no gap for anything to slip through.
+
+This also settles a question step 6 left open: a goal can no longer be created before onboarding, by any client.
+
+**4. The profile without a direction** (`profile.service.ts`, `migrations/0006_direction-into-goals.sql`)
+
+"Onboarding complete" used to be "the `profiles` row exists". Now it is "the six required screen rows exist", which the status query from step 5 already answers. No table, no column and no flag is needed for it.
+
+`GET /api/profile` keeps its meaning, `404` until complete, and returns the seven screens at the top level. Migration `0006` first turns every saved direction into a goal, so nothing that was typed is lost, and then drops `profiles`.
+
+**5. The examples in the API docs are tested** (`test/api-docs-examples.e2e-spec.ts`)
+
+Every "Check it" section on this page says *Try it out → Execute*. For screen 7 that failed: Swagger pre-filled the list of picks by repeating its one example pick, and the API rightly refuses a value picked twice. A second defect was found on the way: sixteen optional text fields were published as type `object`, because a `string | null` property has no single runtime type and Swagger was left to guess.
+
+The test reads the OpenAPI document, builds each request body the way Swagger UI builds it, and sends every one to the real API, in an order that works: register, log in, the screens, then goals. It also checks that every field with a text example is published as a string. Run against the code as it was, it fails with exactly the error from the browser.
+
+**6. The tests**
+
+| Rule | Test |
+|---|---|
+| A goal needs a why | `refuses to create with a missing why: 400, nothing saved` |
+| No goal before the reflection | `refuses a goal until the reflection screens are saved: 409` |
+| `PATCH` changes one field and leaves the rest | `renames a goal and leaves every other answer alone`, `rewrites the why alone` |
+| `null` clears an optional answer | `clears an optional answer with null and keeps the one left out` |
+| `null` is refused for a required answer | `refuses null for the title with 400 and changes nothing` |
+| The profile is complete with six screens | `returns the seven screens once the six required ones are saved` |
+| One missing screen keeps it incomplete | `answers 404 while one required screen is still missing` |
+| The old route is gone | `has no PUT any more: the direction it saved is a goal now` |
+| The docs tell the truth | `accepts every request example exactly as Swagger pre-fills it` |
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0005_goal-why` and `0006_direction-into-goals` are applied, and all 204 tests pass: 35 for goals, 7 for the profile, 5 for the onboarding status, 2 for the examples.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running):
+
+1. **POST /auth/register** with a new email → *Execute*, so the browser has a cookie for a brand-new user.
+2. **POST /goals** → `409`, six names under `missing`.
+3. Under **onboarding**, save screens 2 to 7. Every pre-filled example is now accepted as it is, screen 7 included.
+4. **GET /profile/onboarding** → `completed: true`. **GET /profile** → the seven screens, `basics: null`.
+5. **POST /goals** → `201`, with `whyItMatters`. Copy the `id`.
+6. **PATCH /goals/{id}** with only `{ "title": "A new title" }` → the why, obstacle and first outcome are unchanged.
+7. **PATCH /goals/{id}** with `{ "obstacle": null }` → `obstacle: null`. With `{ "title": null }` → `400`.
