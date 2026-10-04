@@ -52,8 +52,8 @@ The Linear issues were written for a later draft (v1.3) that is not in the repo.
 | The issue expects | Schema v1 has | First needed in |
 |---|---|---|
 | `users.timezone` | no timezone column | YOU-13 (register), YOU-24 (progress per local day). **Added in `0002_add-user-timezone.sql`.** |
-| A way to archive a goal | no archive column | YOU-18 |
-| Deleting a goal/task/step with sessions is refused (409) | `ON DELETE CASCADE` deletes the sessions too | YOU-18, YOU-19, YOU-20 |
+| A way to archive a goal | no archive column | YOU-18. **Added in `0004_goal-archive-and-work-history.sql`** (`goals.archived_at`). |
+| Deleting a goal/task/step with sessions is refused (409) | `ON DELETE CASCADE` deletes the sessions too | YOU-18, YOU-19, YOU-20. **Changed in `0004`** for all three: `sessions.step_id` has no ON DELETE action. |
 | Task status derived from its steps | a stored `tasks.status` column | YOU-19, YOU-20 |
 | Deferrable unique step position | a plain `UNIQUE (task_id, position)` | YOU-21 (reorder) |
 | Composite foreign keys for ownership | single-column foreign keys | No issue depends on it. Services check that the parent belongs to the user before inserting (YOU-19). |
@@ -98,3 +98,21 @@ The rule applies to the whole app: it never says or stores "you have depression 
 ## 2026-10-03 — What onboarding deliberately does not collect
 
 City, address, birthdate, languages, field of study, gender, health. The test for every field was "which feature reads it?"; these had no answer. Age is a range and location is a two-letter country code, both optional. Free-text answers are the most sensitive data in the app: they go only to the user and to the backend's AI call, never into logs or error messages.
+
+## 2026-10-04 — Work history cannot be deleted: the foreign key refuses, the API answers 409
+
+Planning (goals, tasks, steps) can be deleted; a focus session cannot, because it is the proof of progress the app exists to show. Schema v1 cascaded a goal delete all the way through its sessions. Migration `0004_goal-archive-and-work-history.sql` removes `ON DELETE CASCADE` from `sessions.step_id` only. PostgreSQL then refuses to delete a step that has sessions (error 23503), and with it the task or goal whose delete would cascade to that step. The service turns that one error into `409` "This has work history. Archive the goal instead." (YOU-18; tasks and steps reuse it in YOU-19 and YOU-20.)
+
+**Why not a check in the service?** "Does it have sessions?" followed by a delete has a gap between the two statements. The foreign key has none, and it is one statement instead of two. This is the same choice as the unique email index in register.
+
+**Why "no action" and not `RESTRICT`?** The risk was deleting a *user*, which cascades to their steps and to their sessions in one statement. Both variants were tried against the real database (PostgreSQL 16) before writing the migration: both refuse the goal delete, and both let the user delete through. "No action" is checked at the end of the statement, when the sessions are gone too. We keep it because it is the default (a plain `REFERENCES`, nothing extra to remember) and the one that could be deferred if ever needed. A schema test, *deleting a user still deletes everything, sessions included*, protects the behaviour we rely on.
+
+**Cost:** a delete can now fail for a reason the client must handle. The message names the way out, and the goals screen (YOU-39) offers Archive on a 409.
+
+## 2026-10-04 — `goals.archived_at` is a timestamp; archive and unarchive are their own routes
+
+`archived_at TIMESTAMPTZ`, `NULL` while active, the same shape as `steps.done_at`: one column answers "is it archived?" and "since when?". Archiving twice keeps the first timestamp (`COALESCE`), so the call is safe to repeat.
+
+`POST /goals/:id/archive` and `/unarchive`, not `PATCH` with an `archived` field: archiving is something that happens to a goal, with its own rule, not a value the client sets. `PATCH /goals/:id` stays "rename" and nothing else.
+
+A goal and the profile's direction are not linked in the database. The direction is the long-term aim from onboarding; a goal is a concrete objective under it. The frontend offers to turn the direction into the first goal; the backend creates nothing automatically.

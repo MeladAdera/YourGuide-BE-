@@ -5,6 +5,7 @@ import { createTestApp } from './helpers/create-test-app.js';
 
 const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
+const FOREIGN_KEY_VIOLATION = '23503';
 
 // Proves the database enforces the business rules listed in SCHEMA.md §16.
 describe('Database schema', () => {
@@ -257,15 +258,57 @@ describe('Database schema', () => {
     ).rejects.toMatchObject({ code: CHECK_VIOLATION });
   });
 
-  it('deleting a goal deletes its tasks, steps and sessions', async () => {
-    const { userId, goalId, stepId } = await insertStep();
-    await insertSession(userId, stepId);
+  it('deleting a goal without sessions deletes its tasks and steps', async () => {
+    const { goalId } = await insertStep();
 
     await pool.query('DELETE FROM goals WHERE id = $1', [goalId]);
 
     expect(await count('tasks')).toBe(0);
     expect(await count('steps')).toBe(0);
+  });
+
+  it('refuses to delete a goal, task or step that has a session', async () => {
+    const { userId, goalId, taskId, stepId } = await insertStep();
+    await insertSession(userId, stepId);
+
+    const targets = [
+      ['goals', goalId],
+      ['tasks', taskId],
+      ['steps', stepId],
+    ] as const;
+    for (const [table, id] of targets) {
+      await expect(
+        pool.query(`DELETE FROM ${table} WHERE id = $1`, [id]),
+      ).rejects.toMatchObject({
+        code: FOREIGN_KEY_VIOLATION,
+        constraint: 'sessions_step_id_fkey',
+      });
+    }
+    // The refused statement deleted nothing, not even the rows above the step.
+    expect(await count('goals')).toBe(1);
+    expect(await count('tasks')).toBe(1);
+    expect(await count('steps')).toBe(1);
+    expect(await count('sessions')).toBe(1);
+  });
+
+  it('deleting a user still deletes everything, sessions included', async () => {
+    const { userId, stepId } = await insertStep();
+    await insertSession(userId, stepId);
+
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    expect(await count('goals')).toBe(0);
+    expect(await count('steps')).toBe(0);
     expect(await count('sessions')).toBe(0);
+  });
+
+  it('a new goal is active: archived_at starts as NULL', async () => {
+    await insertStep();
+
+    const { rows } = await pool.query<{ archived_at: Date | null }>(
+      'SELECT archived_at FROM goals',
+    );
+    expect(rows).toEqual([{ archived_at: null }]);
   });
 
   it('deleting a session keeps its struggle, without the session link', async () => {

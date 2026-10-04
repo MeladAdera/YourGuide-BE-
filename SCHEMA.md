@@ -6,6 +6,8 @@
 >
 > **Added 2026-10-03:** the onboarding screen tables (sections 5.1–5.8) and `profiles.first_outcome`, `profiles.completed_at`, in migration `0003_onboarding-sections.sql`.
 >
+> **Changed 2026-10-04:** `goals.archived_at` (section 6), and `sessions.step_id` no longer cascades, so work history cannot be deleted (sections 9 and 13), in migration `0004_goal-archive-and-work-history.sql`.
+>
 > **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
@@ -574,7 +576,10 @@ CREATE TABLE goals (
 
   title TEXT NOT NULL,
 
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- NULL = active. Set to the moment the goal was archived.
+  archived_at TIMESTAMPTZ
 );
 
 CREATE INDEX goals_user_idx
@@ -592,6 +597,25 @@ User 1 ───── N Goals
 -   A goal belongs to exactly one user.
 -   A user can have many goals.
 -   Deleting the user deletes their goals.
+-   A goal is **active** (`archived_at IS NULL`) or **archived**.
+    Archiving hides it from the active list and keeps everything under
+    it; unarchiving sets the column back to `NULL`.
+-   A goal with work history cannot be deleted (section 13). It is
+    archived instead.
+
+### Why a timestamp and not a boolean?
+
+The same reason as `steps.done_at`: the timestamp answers "is it
+archived?" and "since when?" with one column, and the second question
+costs nothing to keep.
+
+### How does a goal relate to the profile?
+
+The profile (section 5.0) holds the user's **direction**: the long-term
+aim written at the end of onboarding. A goal is a concrete objective
+under that direction. There is no foreign key between them, and no goal
+is created automatically: the frontend offers to turn the direction into
+a first goal, and that is an ordinary insert here.
 
 ------------------------------------------------------------------------
 
@@ -762,9 +786,10 @@ CREATE TABLE sessions (
     REFERENCES users(id)
     ON DELETE CASCADE,
 
+  -- No ON DELETE action, on purpose: a step that has sessions cannot be
+  -- deleted, nor the task or goal above it (section 13).
   step_id UUID NOT NULL
-    REFERENCES steps(id)
-    ON DELETE CASCADE,
+    REFERENCES steps(id),
 
   started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -1003,26 +1028,57 @@ If the task belongs to another user, it behaves as not found.
 
 ------------------------------------------------------------------------
 
-# 13. Cascade Deletion Policy
+# 13. Deletion Policy
 
-For the current version, work history is considered part of the work
-hierarchy.
+**Planning can be deleted. Work history cannot.**
 
-Therefore:
+A goal, a task and a step are plans. A session is something that
+happened: minutes the user really worked, and the proof of progress the
+whole app exists to show. So the cascade stops one level above it:
 
 ```text
 Delete Goal
-    ↓
+    ↓  ON DELETE CASCADE
 Delete Tasks
-    ↓
+    ↓  ON DELETE CASCADE
 Delete Steps
-    ↓
-Delete Sessions
+    ↓  no action
+A step with a session?  →  the whole delete is refused (error 23503)
 ```
 
-And user deletion cascades through their data.
+`sessions.step_id` has no `ON DELETE` action. PostgreSQL then refuses to
+delete a step that sessions still point at, and because the refusal
+undoes the whole statement, it also refuses the task or goal whose
+delete would have cascaded down to that step. Nothing is half-deleted.
 
-This means the database uses `ON DELETE CASCADE` for the work hierarchy.
+The API turns the refusal into `409` with "This has work history.
+Archive the goal instead." A goal with no sessions under it is deleted
+with its tasks and steps, as before.
+
+### Why the database, and not a check in code?
+
+A check in code ("does this goal have sessions?") followed by a delete
+has a gap between the two: a session can start in between. The foreign
+key has no gap.
+
+### Why "no action" and not `RESTRICT`?
+
+Both refuse the delete above. The worry with either was deleting a
+**user**: that cascades to their steps and also to their sessions in one
+statement, and a step must not be refused just because its session is
+deleted a moment later in the same statement.
+
+We tried both against the real database (PostgreSQL 16) before choosing.
+With both, the goal delete is refused and the user delete goes through.
+"No action" is checked at the end of the statement, when the sessions
+are gone too. We keep it because it is the default, so the column is a
+plain `REFERENCES steps(id)` with nothing extra to remember, and because
+it is the one PostgreSQL would let us defer to the end of a transaction
+if that is ever needed (`RESTRICT` cannot be deferred).
+
+User deletion still cascades through all of their data. A schema test,
+*deleting a user still deletes everything, sessions included*, keeps it
+that way.
 
 For struggles:
 
@@ -1115,7 +1171,9 @@ domain requires it.
 | Session cannot end before it starts | CHECK constraint |
 | Rating must be 1–5 | CHECK constraint |
 | Step positions are unique within a task | UNIQUE constraint |
-| Deleting a goal deletes its work hierarchy | ON DELETE CASCADE |
+| Deleting a goal deletes its tasks and steps | ON DELETE CASCADE |
+| A step with sessions cannot be deleted, nor the task or goal above it | Foreign key with no ON DELETE action |
+| A goal is active or archived | `archived_at` is NULL or a timestamp |
 | Deleting a session keeps its struggle history | ON DELETE SET NULL |
 | One row per user for each onboarding screen | `user_id` is the primary key |
 | Required answers of a screen are present | NOT NULL |

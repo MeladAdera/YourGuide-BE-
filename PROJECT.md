@@ -248,6 +248,7 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 ## 12. Open Questions (decide later)
 
 - Whether users can retake the check-in over time (that would turn `profile_confidence` into a history table).
+- Whether the backend should refuse creating a goal before onboarding is complete. Today only the frontend sends new users through the wizard first.
 - Exact prompt for each struggle situation.
 - Quiz format for evaluation.
 - AI usage limit per user per day (AI calls cost money once other people use it).
