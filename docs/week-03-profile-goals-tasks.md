@@ -12,7 +12,7 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | 6 | [Goals](#step-6--goals) | YOU-18 | Done |
 | 7 | [The direction moves onto goals](#step-7--the-direction-moves-onto-goals) | YOU-53 | Done |
 | 8 | [Every error carries a code](#step-8--every-error-carries-a-code) | YOU-54 | Done |
-| 9 | Validation errors name the field and the rule | YOU-55 | Not started |
+| 9 | [Validation errors name the field and the rule](#step-9--validation-errors-name-the-field-and-the-rule) | YOU-55 | Done |
 | 10 | The user's language on the account | YOU-56 | Not started |
 | 11 | Tasks | YOU-19 | Not started |
 
@@ -1106,3 +1106,133 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 5. **PATCH /goals/{id}** with `abc` as the id → `400` with `"code": "bad_request"`.
 6. Open <http://localhost:3001/api/nothing> in the browser → `"code": "not_found"`.
 7. At the bottom of the Swagger page, **Schemas → ApiErrorBody → code** lists the eleven codes.
+
+---
+
+## Step 9 — Validation errors name the field and the rule
+
+### Why
+
+Step 8 gave every error a code. One kind of error needs more than a code: a form that was filled in wrong.
+
+```json
+{ "statusCode": 400, "error": "Bad Request", "code": "bad_request",
+  "message": ["password must be longer than or equal to 8 characters"] }
+```
+
+The frontend's job with this answer is to put a sentence, in the user's language, under the input that is wrong. From the answer above it cannot:
+
+- **Which input?** The field name is inside an English sentence. It would have to be cut out of the text.
+- **Which rule?** "Too short", "not an email" and "not in the list" need three different sentences. The only way to tell them apart is, again, to read the English.
+- **Whose sentence is it?** `class-validator` writes it. A new version of the library can reword it.
+
+So the answer needs the two facts on their own: the field, and the rule.
+
+What needs this later: the forms in weeks 8 and 9 (register, the seven onboarding screens, goals). Each shows its errors next to the input, in English or Arabic, from one small list of sentences per rule.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `src/common/validation-errors.ts` | Boundary | `brokenRules` flattens the library's errors into field, rule, sentence. `validationFailed` builds the 400. `ValidationErrorBody` describes it for Swagger |
+| `src/common/validation-errors.spec.ts` | Test | 7 unit tests, no database |
+| `src/common/api-error.ts` | Boundary | One new code: `validation.failed` |
+| `src/app.setup.ts` | Setup | The `ValidationPipe` uses `validationFailed` |
+| `src/api-docs.ts` | Docs | Publishes `ValidationErrorBody` |
+| `test/auth-register.e2e-spec.ts`, `test/profile-values.e2e-spec.ts`, `test/goals.e2e-spec.ts`, `test/api-docs.e2e-spec.ts` | Test | The new shape, for a body, a list and a query |
+
+No DTO changed. The rules were already there as decorators; this step only reports them differently.
+
+### How it works
+
+**The answer now**
+
+```json
+{
+  "statusCode": 400, "error": "Bad Request", "code": "validation.failed",
+  "message": ["password must be longer than or equal to 8 characters"],
+  "errors": [{ "field": "password", "code": "minLength" }]
+}
+```
+
+`message` is what it was. `errors` says the same thing in codes, one entry per sentence, in the same order.
+
+**1. Where the rule names come from**
+
+Every decorator on a DTO has a name inside `class-validator`, and the library already reports a broken rule under that name. Nothing had to be invented:
+
+| Decorator | `code` |
+|---|---|
+| `@MinLength(8)` | `minLength` |
+| `@MaxLength(128)` | `maxLength` |
+| `@IsEmail()` | `isEmail` |
+| `@IsString()` | `isString` |
+| `@IsIn([...])` | `isIn` |
+| `@IsTimeZone()` | `isTimeZone` |
+| `@IsInt()`, `@Min(1)`, `@Max(5)` | `isInt`, `min`, `max` |
+| `@ArrayMinSize(2)`, `@ArrayMaxSize(5)`, `@ArrayUnique()` | `arrayMinSize`, `arrayMaxSize`, `arrayUnique` |
+| a field the DTO does not know | `whitelistValidation` |
+
+A new DTO in a later step gets this for free. The answer does not carry the limit itself (the `8` in "at least 8"): the frontend has its own sentence per field, and the limits are in the OpenAPI file.
+
+**2. A field inside a list gets a path** (`brokenRules`)
+
+`class-validator` reports errors as a tree. For the note of the first picked value on screen 7 it is: `values` → `0` → `note`. `brokenRules` walks the tree and joins the names on the way down:
+
+```json
+{ "field": "values.0.note", "code": "maxLength" }
+```
+
+The position counts from 0. A rule of the list itself (a value picked twice) is reported on the list: `{ "field": "values", "code": "arrayUnique" }`.
+
+It is a pure function: errors in, a list out, no NestJS and no database. That is why it has unit tests, and why they run in the pre-push hook.
+
+**3. One field can break several rules**
+
+An empty register body gives three entries for `password`: `maxLength`, `minLength`, `isString`. All three are true for a missing value. The frontend shows the first one per field.
+
+**4. Plugged into the existing pipe** (`app.setup.ts`)
+
+```ts
+new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  exceptionFactory: validationFailed,
+});
+```
+
+`exceptionFactory` is the pipe's own option for "build the error yourself". `validationFailed` returns an `ApiError` with the code `validation.failed`, so it leaves through the same filter as every other error. It applies to bodies and to queries (`GET /api/goals?archived=maybe`).
+
+An id that is not a UUID is not a DTO. `ParseUUIDPipe` refuses it, and it keeps the general code `bad_request` from step 8.
+
+**5. One difference from before, on purpose**
+
+Every `message` was compared before and after this step, for thirteen kinds of refused request. Twelve are word for word the same. The thirteenth: a list that breaks its own rule *and* has a wrong item (a value picked twice, and a note that is too long). NestJS's own code reports only the item and drops the sentence about the list. `brokenRules` reports both, so the user is not sent back twice.
+
+**6. The tests**
+
+| Rule | Test |
+|---|---|
+| The full shape of a refused body | `names the field and the rule when the body is refused` |
+| Several fields, and an unknown one | `names every broken rule, and an unknown field too` |
+| A field inside a list, by position | `says which pick, and which rule, when the body is refused` |
+| A query is reported the same way | `rejects an archived filter that is not true or false` |
+| The path is built on the way down | unit: `builds the path of a field inside a list` |
+| A list's own rule is kept | unit: `keeps the rule of a list when one of its items is wrong too` |
+| Swagger describes the shape | `publishes the shape of an error and the list of error codes` |
+
+### Check it
+
+```bash
+pnpm test        # 17 tests, 7 of them in validation-errors.spec.ts
+pnpm test:e2e    # 209 tests
+```
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running):
+
+1. **POST /auth/register** → *Try it out* → change the password to `short` → `400` with `"code": "validation.failed"` and `errors: [{ "field": "password", "code": "minLength" }]`.
+2. **POST /auth/register** with a new email and the example password → `201`, so the browser has a cookie.
+3. **PUT /profile/sections/values** → in the example, change `health` to `learning`, so `learning` is picked twice → `400` with `{ "field": "values", "code": "arrayUnique" }`.
+4. **PUT /profile/sections/confidence** → change one answer to `9` → `400` with that field and `"code": "max"`.
+5. **GET /goals** with `archived` typed as `maybe` (Swagger only offers `true` and `false`, so use the browser: <http://localhost:3001/api/goals?archived=maybe>) → `{ "field": "archived", "code": "isIn" }`.
+6. At the bottom of the Swagger page, **Schemas → ValidationErrorBody** shows the shape, and **ApiErrorBody → code** now lists twelve codes.

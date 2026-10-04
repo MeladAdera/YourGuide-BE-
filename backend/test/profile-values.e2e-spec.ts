@@ -207,4 +207,30 @@ describe('/api/profile/sections/values', () => {
     expect(await rowCount('profile_meaning')).toBe(0);
     expect(await rowCount('profile_values')).toBe(0);
   });
+
+  it('says which pick, and which rule, when the body is refused', async () => {
+    const response = await put({
+      ...VALUES,
+      values: [
+        { value: 'health', note: 'a'.repeat(301) },
+        { value: 'health', rank: 1 },
+      ],
+    });
+
+    expect(response.status).toBe(400);
+    // The rule of the list itself, then the fields inside it by position.
+    expect(response.body).toMatchObject({
+      code: 'validation.failed',
+      message: [
+        'Each value can be picked only once.',
+        'values.0.note must be shorter than or equal to 300 characters',
+        'values.1.property rank should not exist',
+      ],
+      errors: [
+        { field: 'values', code: 'arrayUnique' },
+        { field: 'values.0.note', code: 'maxLength' },
+        { field: 'values.1.rank', code: 'whitelistValidation' },
+      ],
+    });
+  });
 });

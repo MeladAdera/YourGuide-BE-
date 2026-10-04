@@ -88,6 +88,13 @@ describe('API docs', () => {
     expect(schemas['ApiErrorBody']?.properties?.['code']?.enum).toEqual(
       Object.keys(API_ERRORS),
     );
+    expect(
+      Object.keys(schemas['ValidationErrorBody']?.properties ?? {}),
+    ).toEqual(['statusCode', 'error', 'code', 'message', 'errors']);
+    expect(Object.keys(schemas['FieldError']?.properties ?? {})).toEqual([
+      'field',
+      'code',
+    ]);
   });
 
   it('marks GET /auth/me as needing the session cookie', async () => {

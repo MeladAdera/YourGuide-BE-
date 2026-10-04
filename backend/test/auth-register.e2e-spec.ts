@@ -116,6 +116,35 @@ describe('POST /api/auth/register', () => {
     expect(await countUsers()).toBe(0);
   });
 
+  it('names the field and the rule when the body is refused', async () => {
+    const response = await register({ ...VALID, password: 'short' });
+
+    // `message` is English, for a developer. `errors` is what a client
+    // translates: which field, which rule.
+    expect(response.body).toEqual({
+      statusCode: 400,
+      error: 'Bad Request',
+      code: 'validation.failed',
+      message: ['password must be longer than or equal to 8 characters'],
+      errors: [{ field: 'password', code: 'minLength' }],
+    });
+  });
+
+  it('names every broken rule, and an unknown field too', async () => {
+    const response = await register({
+      email: 'not-an-email',
+      password: VALID.password,
+      timezone: 'Mars/Olympus',
+      isAdmin: true,
+    });
+
+    expect((response.body as { errors: unknown }).errors).toEqual([
+      { field: 'isAdmin', code: 'whitelistValidation' },
+      { field: 'email', code: 'isEmail' },
+      { field: 'timezone', code: 'isTimeZone' },
+    ]);
+  });
+
   it.each([
     ['an invalid email', { ...VALID, email: 'not-an-email' }],
     ['a password shorter than 8 characters', { ...VALID, password: 'short' }],

@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import type { Express } from 'express';
 import { ErrorCodeFilter } from './common/error-code.filter.js';
+import { validationFailed } from './common/validation-errors.js';
 import { AppConfig } from './config/app-config.js';
 
 /**
@@ -21,7 +22,13 @@ export function configureApp(app: INestApplication): void {
   // Turns the Cookie header into req.cookies, so the session cookie can be read.
   app.use(cookieParser());
   app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }),
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      // A refused body names each field and the rule it broke, so the
+      // frontend can write the sentence in the user's language.
+      exceptionFactory: validationFailed,
+    }),
   );
   // Every error answer gets a code, the name a client translates by.
   app.useGlobalFilters(new ErrorCodeFilter());

@@ -43,6 +43,14 @@ export const API_ERRORS = {
     message: 'This has work history. Archive the goal instead.',
   },
 
+  // A body or a query refused by a DTO. The answer carries the sentences
+  // of the broken rules as `message`, and the rules themselves, by field,
+  // as `errors` (see validation-errors.ts).
+  'validation.failed': {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'Some fields are not valid.',
+  },
+
   // The three below have no feature in their name. They are the codes for
   // errors NestJS throws by itself (ErrorCodeFilter picks one by status),
   // and NestJS's own sentence is kept in the answer.
@@ -66,7 +74,8 @@ export type ApiErrorCode = keyof typeof API_ERRORS;
  * An error from the list above: `throw new ApiError('goal.not_found')`.
  * The status and the sentence come from the list, so a code can never be
  * sent with the wrong status. `extra` adds fields to the answer, such as
- * the `missing` screens.
+ * the `missing` screens; a `message` in it replaces the sentence from the
+ * list, which is how a validation error lists its own sentences.
  */
 export class ApiError extends HttpException {
   constructor(code: ApiErrorCode, extra: Record<string, unknown> = {}) {

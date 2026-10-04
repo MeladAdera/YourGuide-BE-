@@ -404,7 +404,13 @@ describe('/api/goals', () => {
   });
 
   it('rejects an archived filter that is not true or false', async () => {
-    expect((await call('get', '?archived=maybe')).status).toBe(400);
+    const refused = await call('get', '?archived=maybe');
+
+    expect(refused.status).toBe(400);
+    expect(refused.body).toMatchObject({
+      code: 'validation.failed',
+      errors: [{ field: 'archived', code: 'isIn' }],
+    });
     expect((await call('get', '?other=1')).status).toBe(400);
   });
 
