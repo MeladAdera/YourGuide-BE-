@@ -30,10 +30,14 @@ interface AnswerOptions {
  */
 export function Answer(options: AnswerOptions): PropertyDecorator {
   const max = options.max ?? MAX_ANSWER;
+  // `type: String` is stated, not inferred. An optional answer is typed
+  // `string | null`, and for a union TypeScript emits "Object" as the
+  // runtime type, so Swagger would publish the field as an object.
   const property =
     options.description === undefined
-      ? { example: options.example, maxLength: max }
+      ? { type: String, example: options.example, maxLength: max }
       : {
+          type: String,
           example: options.example,
           maxLength: max,
           description: options.description,

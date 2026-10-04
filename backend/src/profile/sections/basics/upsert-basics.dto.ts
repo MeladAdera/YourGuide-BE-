@@ -31,6 +31,7 @@ export class UpsertBasicsDto {
   ageRange?: AgeRange | null;
 
   @ApiPropertyOptional({
+    type: String,
     example: 'AE',
     description:
       'ISO 3166-1 alpha-2 country code. Country only, never a city or address.',

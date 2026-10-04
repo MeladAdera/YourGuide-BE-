@@ -45,11 +45,22 @@ export class UpsertValuesDto {
     minItems: MIN_VALUES,
     maxItems: MAX_VALUES,
     description: `${String(MIN_VALUES)} to ${String(MAX_VALUES)} areas that matter most, each picked once. A set, not a ranking.`,
+    // Its own example, with different values. Without one, Swagger builds
+    // the list by repeating the single example pick, which this very rule
+    // refuses: the pre-filled body could never be saved.
+    example: [
+      {
+        value: 'learning',
+        note: 'Learning is the one thing nobody can take back.',
+      },
+      { value: 'health' },
+      { value: 'independence', note: 'Deciding my own hours.' },
+    ],
   })
   @IsArray()
   @ArrayMinSize(MIN_VALUES)
   @ArrayMaxSize(MAX_VALUES)
-  @ArrayUnique(pickValue)
+  @ArrayUnique(pickValue, { message: 'Each value can be picked only once.' })
   @ValidateNested({ each: true })
   @Type(() => ValuePickDto)
   values!: ValuePickDto[];

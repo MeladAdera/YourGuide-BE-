@@ -452,7 +452,7 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 
 1. **POST /auth/login** → *Execute*.
 2. **PUT /profile/sections/values** → *Try it out* → *Execute* with the example → `200`, picks in alphabetical order.
-3. Change one pick's `value` to the same as another → `400`, *values's elements must be unique*.
+3. Change one pick's `value` to the same as another → `400`, *Each value can be picked only once.*
 4. In pgAdmin, `profile_values` has as many rows as picks; `profile_meaning` has one.
 
 ---
