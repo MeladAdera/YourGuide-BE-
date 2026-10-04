@@ -5,14 +5,14 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | # | Step | Linear | Status |
 |---|---|---|---|
 | 1 | [Profile](#step-1--profile) | YOU-17 | Done |
-| 2 | [Onboarding: the database](#step-2--onboarding-the-database) | — | Done |
-| 3 | [Onboarding: screens 1–6](#step-3--onboarding-screens-16) | — | Done |
-| 4 | [Onboarding: screen 7, values](#step-4--onboarding-screen-7-values) | — | Done |
-| 5 | [Onboarding: direction, completion and status](#step-5--onboarding-direction-completion-and-status) | — | Done |
-| 6 | Goals | YOU-18 | Not started |
+| 2 | [Onboarding: the database](#step-2--onboarding-the-database) | YOU-49 | Done |
+| 3 | [Onboarding: screens 1–6](#step-3--onboarding-screens-16) | YOU-50 | Done |
+| 4 | [Onboarding: screen 7, values](#step-4--onboarding-screen-7-values) | YOU-51 | Done |
+| 5 | [Onboarding: direction, completion and status](#step-5--onboarding-direction-completion-and-status) | YOU-52 | Done |
+| 6 | [Goals](#step-6--goals) | YOU-18 | Done |
 | 7 | Tasks | YOU-19 | Not started |
 
-Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues are created from that design; the ids are filled in here once they exist.
+Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues, YOU-49 to YOU-52, were created from that design.
 
 All commands on this page run inside `backend/`.
 
@@ -587,3 +587,168 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 4. Under **onboarding**, save screens 2 to 7 with their examples. **GET /profile/onboarding** → `missing: []`, `completed: false`.
 5. **PUT /profile** → `200` with `completedAt` and all six screens under `sections`, `basics: null`.
 6. **GET /profile/onboarding** → `completed: true`.
+
+---
+
+## Step 6 — Goals
+
+### Why
+
+Onboarding ends with a direction: the long-term aim, in the person's own words. A goal is the first concrete thing under it. Three reasons it is built now:
+
+- **Everything after it hangs on a goal.** A task needs a `goal_id`, a step needs a task, a focus session needs a step. Nothing in weeks 3 to 7 can exist without a goal row.
+- **It is the first list.** The profile and every onboarding screen are one row per user, found by `user_id` alone. A goal is one of many, found by its own `id`. So this step sets the pattern that tasks, steps and sessions copy: every statement says `WHERE id = … AND user_id = …`, and a row that belongs to someone else is answered exactly like a row that does not exist, with `404`.
+- **It carries the first rule about deleting.** `PROJECT.md` §6.2: a goal without work history can be deleted; a goal with history is archived, so progress keeps it. That rule protects the one thing the app exists to show, and it had to be decided before tasks and steps, which follow the same rule.
+
+How a goal relates to the profile: they are not linked in the database. After the last onboarding screen the frontend offers "turn this into your first goal", prefilled from the direction, and calls the ordinary `POST /api/goals`. The backend creates nothing automatically.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0004_goal-archive-and-work-history.sql` | Database | `goals.archived_at`; `sessions.step_id` stops cascading |
+| `src/goals/dto/goal-title.dto.ts` | Boundary | The title, for create and for rename |
+| `src/goals/dto/list-goals.query.ts` | Boundary | `?archived=true` or `false` |
+| `src/goals/dto/goal.dto.ts` | Boundary | A goal as the API returns it |
+| `src/goals/goals.repository.ts` | Repository | Six statements, every one filtered by `user_id` |
+| `src/goals/goals.service.ts` | Service | "No row" becomes `404`; the foreign-key refusal becomes `409` |
+| `src/goals/goals.controller.ts` | Controller | Six routes under `/api/goals` |
+| `src/goals/goals.module.ts` | Module | Registered in `app.module.ts` |
+| `src/database/pg-errors.ts` | Repository | `isForeignKeyViolation`, next to `isUniqueViolation` |
+| `src/sessions/session-constraints.ts` | Rule | The constraint name and the message, reused by tasks and steps |
+| `test/goals.e2e-spec.ts` | Test | 22 e2e tests |
+| `test/schema.e2e-spec.ts` | Test | 4 tests where there was 1: what a delete may and may not remove |
+| `test/api-docs.e2e-spec.ts` | Test | Knows the 4 new paths |
+
+It is two commits: the database change, then the API.
+
+### How it works
+
+**The routes**
+
+| Request | Answer |
+|---|---|
+| `GET /api/goals` or `?archived=false` | `200`, the active goals, oldest first |
+| `GET /api/goals?archived=true` | `200`, the archived goals |
+| `POST /api/goals` `{ "title": "…" }` | `201`, the new goal |
+| `PATCH /api/goals/:id` `{ "title": "…" }` | `200`, the renamed goal |
+| `POST /api/goals/:id/archive` | `200`, the goal with `archivedAt` set |
+| `POST /api/goals/:id/unarchive` | `200`, the goal with `archivedAt: null` |
+| `DELETE /api/goals/:id` | `204`, or `409` when the goal has work history |
+
+A goal looks like this:
+
+```
+{ "id": "5b0c…", "title": "Ship my first product",
+  "createdAt": "2026-10-04T07:10:00.000Z", "archivedAt": null }
+```
+
+| Problem | Status |
+|---|---|
+| No cookie, or the session is gone | `401` |
+| A missing or empty title, one over 200 characters, an unknown field; an `:id` that is not a UUID; `archived` that is not `true` or `false` | `400` |
+| No goal with that id, **or it belongs to someone else** | `404` with `Goal not found.` |
+| Deleting a goal that has a focus session on one of its steps | `409` with `This has work history. Archive the goal instead.` |
+
+**1. The database first** (`migrations/0004_goal-archive-and-work-history.sql`)
+
+Two changes, both needed by the rule above.
+
+`goals.archived_at TIMESTAMPTZ`, `NULL` while the goal is active. A timestamp and not a boolean for the same reason as `steps.done_at`: one column answers "is it archived?" and "since when?".
+
+The second change is the important one. Schema v1 cascaded a delete all the way down: goal → tasks → steps → **sessions**. The migration removes `ON DELETE CASCADE` from the last link only:
+
+```text
+Delete Goal
+    ↓  cascade
+Delete Tasks
+    ↓  cascade
+Delete Steps
+    ↓  no action
+A step with a session?  →  PostgreSQL refuses the whole delete (error 23503)
+```
+
+Because the refusal undoes the whole statement, nothing is half-deleted: the goal, its tasks and its steps are all still there.
+
+*Why let the database refuse, and not check in code first?* "Does this goal have sessions?" followed by `DELETE` is two statements with a gap between them; a session could start in the gap. The foreign key has no gap. It is the same choice as the unique email index in week 2: the database decides, the code translates.
+
+*Why "no action" and not `RESTRICT`?* The worry was deleting a whole user, which cascades to their steps and to their sessions in one statement. Before writing the migration we tried both variants against the real database, inside a transaction that was rolled back. Both refuse the goal delete; both let the user delete through. We keep "no action" because it is the default, so the column is a plain `REFERENCES steps(id)`. The schema test *deleting a user still deletes everything, sessions included* protects the behaviour. `DECISIONS.md` (2026-10-04) has the full note.
+
+**2. The repository** (`src/goals/goals.repository.ts`)
+
+Six statements. Look at the `WHERE` of every one that touches a single goal:
+
+```sql
+UPDATE goals SET title = $3
+ WHERE id = $2 AND user_id = $1
+ RETURNING id, title, created_at, archived_at
+```
+
+`user_id = $1` is in the statement itself, not in a check before it. If the goal belongs to someone else, the statement simply matches no row: `rename`, `archive` and `unarchive` return `undefined`, and `delete` returns `false`. There is no way to forget the ownership check, because there is no separate check to forget.
+
+Two small things worth reading:
+
+- The list uses `(archived_at IS NOT NULL) = $2`, so one statement serves both the active and the archived list.
+- Archive uses `COALESCE(archived_at, now())`: archiving a goal that is already archived keeps the first timestamp. The call is safe to repeat.
+
+**3. The service** (`src/goals/goals.service.ts`)
+
+`found()` turns `undefined` into `NotFoundException('Goal not found.')`, the same helper shape as `saved()` in the onboarding screens.
+
+`delete` is the one method with a decision in it:
+
+```ts
+try {
+  deleted = await this.goals.delete(this.db.pool, userId, goalId);
+} catch (error) {
+  if (isForeignKeyViolation(error, SESSION_STEP_FK)) {
+    throw new ConflictException('This has work history. Archive the goal instead.');
+  }
+  throw error;
+}
+if (!deleted) throw new NotFoundException('Goal not found.');
+```
+
+It asks for one specific constraint by name, `sessions_step_id_fkey`, so any other database error still surfaces as a real error instead of a misleading `409`.
+
+*What does another user get when they try to delete my goal that has history?* `404`, not `409`. Their `DELETE … AND user_id = $1` matches no row, so nothing is deleted and the foreign key is never asked. A `409` would have told them the goal exists.
+
+**4. The controller** (`src/goals/goals.controller.ts`)
+
+- `ParseUUIDPipe` on every `:id`. Without it, `not-a-uuid` would reach PostgreSQL, which rejects the value, and the client would get `500` for its own mistake. With it: `400`.
+- Archive and unarchive are `POST /:id/archive` and `/unarchive`, not a `PATCH` with an `archived` field. Archiving is something that happens to a goal, with its own rule; `PATCH` stays "rename" and nothing else. They answer `200`, not the `201` that `POST` gives by default, because nothing new is created.
+- `ListGoalsQuery` validates the query string like a body. Query values are always text, so `archived` is the string `'true'` or `'false'`, and the controller compares it with `=== 'true'`.
+
+**5. The tests** (`test/goals.e2e-spec.ts`)
+
+Tasks, steps and sessions have no API yet, so the tests insert them with SQL to build the two situations the delete rule cares about.
+
+| Rule (from the issue's *Done when*) | Test |
+|---|---|
+| Archive hides from the active list; unarchive restores | `archive hides the goal from the active list; unarchive restores it` |
+| Delete without sessions removes tasks and steps | `deletes a goal without sessions, with its tasks and steps` |
+| Delete with a session is `409`, nothing deleted | `refuses to delete a goal with a session: 409, nothing deleted` |
+| User B gets `404` on every endpoint | `answers 404 on every endpoint for another user's goal` |
+
+And the rest: creation order in the list, rename, archiving twice keeps the first timestamp, `404` for an unknown id, `400` for a malformed id or filter, `401` on all six routes, and five bad titles, each tried on create and on rename.
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0004_goal-archive-and-work-history` is applied, and all 196 tests pass: 22 are new in `test/goals.e2e-spec.ts`, and `test/schema.e2e-spec.ts` has 3 more.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running), under the **goals** tag:
+
+1. **POST /auth/login** → *Execute*, so the browser has the cookie.
+2. **POST /goals** → `201`. Copy the `id`.
+3. **GET /goals** → your goal. **GET /goals** with `archived` = `true` → `[]`.
+4. **POST /goals/{id}/archive** → `200` with `archivedAt`. **GET /goals** → `[]`; with `archived` = `true` → your goal.
+5. **POST /goals/{id}/unarchive** → `archivedAt: null` again.
+6. **PATCH /goals/{id}** with `not-a-uuid` as the id → `400`.
+7. **DELETE /goals/{id}** → `204`. **GET /goals** → `[]`.
+
+The `409` needs a focus session, and sessions have no route until week 5. Until then the test *refuses to delete a goal with a session* is where to see it.
