@@ -31,7 +31,7 @@ const BAD_INPUT =
 
 /**
  * One GET and one PUT per onboarding screen. PUT always sends the whole
- * screen and creates or replaces it, exactly like PUT /profile: the client
+ * screen and creates or replaces it in one call: the client
  * never has to ask "did I save this already?".
  *
  * No @Public() anywhere here: every route needs a login. The decorators on

@@ -37,7 +37,7 @@ function pickValue(pick: unknown): unknown {
 /**
  * Screen 7, what matters to you: two to five values from a fixed list,
  * and the person they want to become. The answers here are half of the
- * "why" behind the goal on screen 8.
+ * "why" behind the first goal.
  */
 export class UpsertValuesDto {
   @ApiProperty({
