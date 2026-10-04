@@ -12,6 +12,7 @@ const USER = {
   email: 'melad@example.com',
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
+  locale: 'en',
 };
 const ROUTE = '/api/profile/sections/values';
 const UPDATED_AT = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) as unknown;

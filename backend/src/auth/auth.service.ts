@@ -7,6 +7,7 @@ import { isUniqueViolation } from '../database/pg-errors.js';
 import { AuthSessionsRepository } from './auth-sessions.repository.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
+import { UpdateMeDto } from './dto/update-me.dto.js';
 import { User } from './dto/user.dto.js';
 import { UsersRepository } from './users.repository.js';
 
@@ -49,6 +50,7 @@ export class AuthService implements OnModuleInit {
           email: input.email,
           passwordHash,
           timezone: input.timezone,
+          locale: input.locale,
         });
         const session = await this.createSession(client, user.id);
         return { user, session };
@@ -91,13 +93,15 @@ export class AuthService implements OnModuleInit {
 
   /** For GET /auth/me. `userId` comes from the guard, so the user exists. */
   async currentUser(userId: string): Promise<User> {
-    const user = await this.users.findById(this.db.pool, userId);
-    if (user === undefined) {
-      // ON DELETE CASCADE removes a user's sessions with the user, so a live
-      // session without a user means the database is broken. Fail fast.
-      throw new Error(`Session belongs to missing user ${userId}`);
-    }
-    return user;
+    return existing(userId, await this.users.findById(this.db.pool, userId));
+  }
+
+  /** For PATCH /auth/me: the language the app shows this user. */
+  async updateMe(userId: string, input: UpdateMeDto): Promise<User> {
+    return existing(
+      userId,
+      await this.users.update(this.db.pool, userId, input),
+    );
   }
 
   /** Deleting the row is what ends the session: the token stops working. */
@@ -118,6 +122,17 @@ export class AuthService implements OnModuleInit {
     });
     return { token, expiresAt };
   }
+}
+
+/**
+ * ON DELETE CASCADE removes a user's sessions with the user, so a live
+ * session without a user means the database is broken. Fail fast.
+ */
+function existing(userId: string, user: User | undefined): User {
+  if (user === undefined) {
+    throw new Error(`Session belongs to missing user ${userId}`);
+  }
+  return user;
 }
 
 /** Only this hash is stored, so a leaked database cannot be used to log in. */

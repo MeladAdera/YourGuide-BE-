@@ -72,6 +72,7 @@ describe('API docs', () => {
       'id',
       'email',
       'timezone',
+      'locale',
     ]);
   });
 
@@ -102,6 +103,9 @@ describe('API docs', () => {
 
     const document = response.body as OpenApiDocument;
     expect(document.paths['/api/auth/me']?.get?.security).toEqual([
+      { cookie: [] },
+    ]);
+    expect(document.paths['/api/auth/me']?.patch?.security).toEqual([
       { cookie: [] },
     ]);
     expect(document.paths['/api/auth/login']?.post?.security).toBeUndefined();

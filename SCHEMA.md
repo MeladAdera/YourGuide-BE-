@@ -10,6 +10,8 @@
 >
 > **Changed 2026-10-04 (2):** a goal carries `why_it_matters`, `obstacle` and `first_outcome` (migration `0005_goal-why.sql`). The `profiles` table is gone: its rows became goals (migration `0006_direction-into-goals.sql`). Sections 5 and 6.
 >
+> **Added 2026-10-04 (3):** `users.locale` (section 3.1), the language the app shows the user, in migration `0007_add-user-locale.sql`.
+>
 > **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
@@ -74,6 +76,9 @@ CREATE TABLE users (
 
   timezone TEXT NOT NULL,
 
+  locale TEXT NOT NULL
+    CHECK (locale IN ('en', 'ar')),
+
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -91,6 +96,8 @@ The system needs to know who the user is and authenticate them.
 -   Email is unique case-insensitively.
 -   Store a password hash, never the raw password.
 -   Timezone is required. It is an IANA name such as `Asia/Dubai`.
+-   Locale is required. It is `en` (English) or `ar` (Arabic), with no
+    default: the API always names it.
 
 ### Why `timezone`?
 
@@ -103,6 +110,25 @@ is 21:30 on Monday in UTC.
 
 Without the timezone, that session would be counted on the wrong day.
 The API checks that the name is a real timezone before saving it.
+
+### Why `locale`?
+
+The app is shown in English or Arabic, and the frontend does the
+translating. The database stores no translated text: it holds codes
+(`family`, `stuck`) and what the user wrote.
+
+The backend still needs to know the user's language, for one reason: the
+AI advice is the only text the backend writes for a person, and it must
+be written in the language that person reads. Stored on the account, the
+choice also follows the user to another browser.
+
+This is the display language of the app, a setting. It is not "the
+languages a person speaks", which the profile deliberately does not ask
+(section 5.1): no feature reads that.
+
+The list is a CHECK constraint, like every other option list. A third
+language is a migration, one entry in `SUPPORTED_LOCALES`, and one
+translation file in the frontend.
 
 ------------------------------------------------------------------------
 
@@ -1150,6 +1176,7 @@ domain requires it.
 | Rule | Database mechanism |
 |---|---|
 | User email must be unique | Unique index |
+| A user's language is one the app has | CHECK constraint, NOT NULL, no default |
 | Goal belongs to one user | FK |
 | Task belongs to one goal | FK |
 | Step belongs to one task | FK |

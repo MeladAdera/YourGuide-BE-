@@ -15,6 +15,7 @@ const USER = {
   email: 'melad@example.com',
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
+  locale: 'en',
 };
 const CREDENTIALS = { email: USER.email, password: USER.password };
 
@@ -59,6 +60,7 @@ describe('POST /api/auth/login', () => {
       id: (registered.body as { id: string }).id,
       email: USER.email,
       timezone: USER.timezone,
+      locale: USER.locale,
     });
   });
 

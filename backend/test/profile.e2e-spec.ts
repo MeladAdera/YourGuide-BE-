@@ -22,6 +22,7 @@ const USER = {
   email: 'melad@example.com',
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
+  locale: 'en',
 };
 const TIMESTAMP = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) as unknown;
 

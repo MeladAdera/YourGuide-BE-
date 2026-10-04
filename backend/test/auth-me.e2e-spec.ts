@@ -11,6 +11,7 @@ const USER = {
   email: 'melad@example.com',
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
+  locale: 'en',
 };
 
 // GET /auth/me is the first protected route, so these tests also cover
@@ -94,5 +95,119 @@ describe('GET /api/auth/me', () => {
       code: 'auth.not_logged_in',
       message: 'Not logged in.',
     });
+  });
+});
+
+// The language switch. The frontend shows the new language by itself; this
+// route makes the choice follow the account.
+describe('PATCH /api/auth/me', () => {
+  let app: INestApplication<App>;
+  let pool: Pool;
+  let registered: Response;
+  let cookie: string;
+
+  function register(email: string): Promise<Response> {
+    return request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({ ...USER, email });
+  }
+
+  function patch(
+    body: object,
+    asCookie: string | null = cookie,
+  ): Promise<Response> {
+    const req = request(app.getHttpServer()).patch('/api/auth/me');
+    return (asCookie === null ? req : req.set('Cookie', asCookie)).send(body);
+  }
+
+  async function storedLocale(email: string): Promise<string | undefined> {
+    const { rows } = await pool.query<{ locale: string }>(
+      'SELECT locale FROM users WHERE email = $1',
+      [email],
+    );
+    return rows[0]?.locale;
+  }
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    pool = app.get(DatabaseService).pool;
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  // Every test starts with one logged-in account that reads English.
+  beforeEach(async () => {
+    resetRateLimits(app);
+    registered = await register(USER.email);
+    cookie = cookieHeader(sessionToken(registered));
+  });
+
+  it('changes the language and returns the user', async () => {
+    const response = await patch({ locale: 'ar' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ...registered.body, locale: 'ar' });
+    expect(await storedLocale(USER.email)).toBe('ar');
+  });
+
+  it('is what GET /auth/me and the next login return', async () => {
+    await patch({ locale: 'ar' });
+
+    const me = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Cookie', cookie);
+    const login = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email: USER.email, password: USER.password });
+
+    expect(me.body).toMatchObject({ locale: 'ar' });
+    expect(login.body).toMatchObject({ locale: 'ar' });
+  });
+
+  it('changes nothing when the language is left out', async () => {
+    const response = await patch({});
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(registered.body);
+  });
+
+  it.each([
+    ['a language the app does not have', { locale: 'fr' }],
+    ['null', { locale: null }],
+  ])('refuses %s with 400 and changes nothing', async (_name, body) => {
+    const response = await patch(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      code: 'validation.failed',
+      errors: [{ field: 'locale', code: 'isIn' }],
+    });
+    expect(await storedLocale(USER.email)).toBe('en');
+  });
+
+  it('refuses a field that cannot be changed here', async () => {
+    const response = await patch({ email: 'other@example.com' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      errors: [{ field: 'email', code: 'whitelistValidation' }],
+    });
+  });
+
+  it("leaves another user's language alone", async () => {
+    await register('other@example.com');
+
+    await patch({ locale: 'ar' });
+
+    expect(await storedLocale('other@example.com')).toBe('en');
+  });
+
+  it('needs a login', async () => {
+    const response = await patch({ locale: 'ar' }, null);
+
+    expect(response.status).toBe(401);
+    expect(await storedLocale(USER.email)).toBe('en');
   });
 });

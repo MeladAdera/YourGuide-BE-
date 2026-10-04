@@ -198,10 +198,11 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/auth/register` | Create account, set cookie |
+| POST | `/api/auth/register` | Create account, set cookie. The browser sends its `timezone` and the `locale` it is showing |
 | POST | `/api/auth/login` | Check password, set cookie |
 | POST | `/api/auth/logout` | Delete session, clear cookie |
 | GET | `/api/auth/me` | Current user |
+| PATCH | `/api/auth/me` | Change the language the app shows (`locale`: `en` or `ar`) |
 | GET | `/api/profile` | The seven onboarding screens. 404 until onboarding is complete (screens 2–7 saved) |
 | GET | `/api/profile/onboarding` | Which screens are saved and whether onboarding is complete |
 | GET / PUT | `/api/profile/sections/{screen}` | One onboarding screen: `basics`, `situation`, `achievements`, `patterns`, `self-view`, `confidence`, `values` |

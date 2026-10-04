@@ -11,6 +11,7 @@ const USER = {
   email: 'melad@example.com',
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
+  locale: 'en',
 };
 const NOTHING_SAVED = {
   completed: false,

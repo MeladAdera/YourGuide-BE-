@@ -15,6 +15,7 @@ const VALID = {
   email: 'melad@example.com',
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
+  locale: 'en',
 };
 
 describe('POST /api/auth/register', () => {
@@ -54,7 +55,40 @@ describe('POST /api/auth/register', () => {
       id: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown,
       email: VALID.email,
       timezone: VALID.timezone,
+      locale: VALID.locale,
     });
+  });
+
+  it('saves the language the browser sent', async () => {
+    const response = await register({ ...VALID, locale: 'ar' });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({ locale: 'ar' });
+    const { rows } = await pool.query<{ locale: string }>(
+      'SELECT locale FROM users',
+    );
+    expect(rows).toEqual([{ locale: 'ar' }]);
+  });
+
+  it.each([
+    ['a language the app does not have', { ...VALID, locale: 'fr' }],
+    [
+      'a missing language',
+      {
+        email: VALID.email,
+        password: VALID.password,
+        timezone: VALID.timezone,
+      },
+    ],
+  ])('rejects %s with 400, naming the field', async (_name, body) => {
+    const response = await register(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      code: 'validation.failed',
+      errors: [{ field: 'locale', code: 'isIn' }],
+    });
+    expect(await countUsers()).toBe(0);
   });
 
   it('stores a hash of the password, never the password itself', async () => {
@@ -132,8 +166,8 @@ describe('POST /api/auth/register', () => {
 
   it('names every broken rule, and an unknown field too', async () => {
     const response = await register({
+      ...VALID,
       email: 'not-an-email',
-      password: VALID.password,
       timezone: 'Mars/Olympus',
       isAdmin: true,
     });
@@ -148,7 +182,10 @@ describe('POST /api/auth/register', () => {
   it.each([
     ['an invalid email', { ...VALID, email: 'not-an-email' }],
     ['a password shorter than 8 characters', { ...VALID, password: 'short' }],
-    ['a missing timezone', { email: VALID.email, password: VALID.password }],
+    [
+      'a missing timezone',
+      { email: VALID.email, password: VALID.password, locale: VALID.locale },
+    ],
     ['an unknown field', { ...VALID, isAdmin: true }],
   ])('rejects %s with 400', async (_name, body) => {
     const response = await register(body);

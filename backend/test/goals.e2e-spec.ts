@@ -14,6 +14,7 @@ const USER = {
   email: 'melad@example.com',
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
+  locale: 'en',
 };
 /** A goal with every answer, as POST sends it. */
 const GOAL = {

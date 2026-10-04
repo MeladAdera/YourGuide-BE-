@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
   Res,
@@ -28,6 +29,7 @@ import { AuthService } from './auth.service.js';
 import { CurrentUser } from './current-user.decorator.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
+import { UpdateMeDto } from './dto/update-me.dto.js';
 import { User } from './dto/user.dto.js';
 import { Public } from './public.decorator.js';
 import {
@@ -55,7 +57,7 @@ export class AuthController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid email, password shorter than 8, unknown timezone, or an unknown field.',
+      'Invalid email, password shorter than 8, unknown timezone, a language the app does not have, or an unknown field.',
   })
   @ApiConflictResponse({
     description: 'An account with this email already exists.',
@@ -133,5 +135,29 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() userId: string): Promise<User> {
     return this.auth.currentUser(userId);
+  }
+
+  // The language switch in the app. The frontend shows the new language at
+  // once by itself; this call makes the choice follow the account, to
+  // another browser and into the AI advice.
+  @ApiOperation({ summary: 'Change the language the app shows you' })
+  @ApiCookieAuth()
+  @ApiOkResponse({
+    type: User,
+    description: 'The user, with the new language.',
+  })
+  @ApiBadRequestResponse({
+    description: 'A language the app does not have, or an unknown field.',
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'No session cookie, or the session has expired or was logged out.',
+  })
+  @Patch('me')
+  updateMe(
+    @CurrentUser() userId: string,
+    @Body() dto: UpdateMeDto,
+  ): Promise<User> {
+    return this.auth.updateMe(userId, dto);
   }
 }

@@ -164,3 +164,19 @@ So the backend never translates. It answers with codes: an error has a `code` (`
 **What has no code:** a crash (500). It is a bug, not an answer.
 
 **The order of work:** the backend first, before Tasks, while there were nine sentences to change: a code on every error (YOU-54), validation errors that name the field and the rule (YOU-55), the user's language on the account for the AI (YOU-56). The AI writes in that language in week 6. The frontend gets its translation files and right-to-left layout in week 8, with its first component.
+
+## 2026-10-04 — The user's language is stored on the account (`users.locale`)
+
+`users.locale` is `en` or `ar`: required, no default, a CHECK constraint. The browser sends it at register, next to `timezone`. `PATCH /api/auth/me` changes it. Migration `0007_add-user-locale.sql`; existing users got `en`.
+
+**Why store it, when the frontend does the translating?** Two readers. The AI call (week 6) is the one place the backend writes text for a person, and it must write in the language that person reads. And the frontend: a choice kept only in a browser cookie is lost on the next device.
+
+**This does not undo "we do not collect languages"** (2026-10-03). That rule is about the languages a person speaks, a fact about them that no feature reads. This is the app's display language, a setting, and it passes the same test: two features read it.
+
+**Required at register, not optional with a default.** The frontend always knows which language it is showing, so it can always say. A default in the database would turn a forgotten field into English without anyone noticing. Same choice as `timezone`.
+
+**Not read from the request's `Accept-Language` header.** The backend translates nothing, so it has no use for the language of one request. It needs the language of the *person*, at the moment the AI writes to them.
+
+**`PATCH /api/auth/me` takes only `locale`.** Changing the timezone or the email are separate decisions with their own questions (which day does yesterday's session belong to? is the new email taken?). They are not part of this work.
+
+**Cost:** a third language is three changes that must agree: a migration for the CHECK, `SUPPORTED_LOCALES`, and a translation file in the frontend. That is the same price every option list in this schema pays.

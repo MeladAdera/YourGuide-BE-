@@ -13,7 +13,7 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | 7 | [The direction moves onto goals](#step-7--the-direction-moves-onto-goals) | YOU-53 | Done |
 | 8 | [Every error carries a code](#step-8--every-error-carries-a-code) | YOU-54 | Done |
 | 9 | [Validation errors name the field and the rule](#step-9--validation-errors-name-the-field-and-the-rule) | YOU-55 | Done |
-| 10 | The user's language on the account | YOU-56 | Not started |
+| 10 | [The user's language on the account](#step-10--the-users-language-on-the-account) | YOU-56 | Done |
 | 11 | Tasks | YOU-19 | Not started |
 
 Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues, YOU-49 to YOU-52, were created from that design. Step 7 was added on 2026-10-04, after using the API showed that screen 8 and goals were two homes for one thing.
@@ -1236,3 +1236,159 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 4. **PUT /profile/sections/confidence** → change one answer to `9` → `400` with that field and `"code": "max"`.
 5. **GET /goals** with `archived` typed as `maybe` (Swagger only offers `true` and `false`, so use the browser: <http://localhost:3001/api/goals?archived=maybe>) → `{ "field": "archived", "code": "isIn" }`.
 6. At the bottom of the Swagger page, **Schemas → ValidationErrorBody** shows the shape, and **ApiErrorBody → code** now lists twelve codes.
+
+---
+
+## Step 10 — The user's language on the account
+
+### Why
+
+Steps 8 and 9 let the frontend translate everything the API answers. So why does the backend need to know the user's language at all?
+
+Because one kind of text is not translated by anyone: it is *written* in a language from the start. In week 6 the AI gives advice at the moment someone wants to give up. That call is made by the backend, and the backend must tell the model which language to write in. Advice in English for someone who reads the app in Arabic would fail at exactly the moment the app exists for.
+
+The second reason is smaller. A language kept only in a browser cookie is gone on the next device. On the account, it follows the person.
+
+It is the same reasoning as `users.timezone`: the browser knows it, the backend needs it later, so it is sent once at register and stored.
+
+*Does this break "we do not collect languages"?* No. That rule (`DECISIONS.md`, 2026-10-03) is about the languages a person speaks, which no feature reads. This is the app's display language, a setting, and two features read it.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0007_add-user-locale.sql` | Database | `users.locale`: `en` or `ar`, required, no default |
+| `src/auth/locale.ts` | Constant | `SUPPORTED_LOCALES` and the `Locale` type derived from it |
+| `src/auth/dto/register.dto.ts` | Boundary | Register takes a required `locale` |
+| `src/auth/dto/user.dto.ts` | Boundary | A user is returned with `locale` |
+| `src/auth/dto/update-me.dto.ts` | Boundary | `PATCH /auth/me`: `locale`, optional, `null` refused |
+| `src/auth/users.repository.ts` | Repository | Reads and writes `locale`; `update` |
+| `src/auth/auth.service.ts` | Service | `updateMe` |
+| `src/auth/auth.controller.ts` | Controller | `PATCH /api/auth/me` |
+| `test/auth-me.e2e-spec.ts` | Test | 8 new tests for `PATCH` |
+| `test/auth-register.e2e-spec.ts`, `test/schema.e2e-spec.ts`, `test/api-docs.e2e-spec.ts` | Test | The new field, at the API and in the database |
+| Ten e2e files | Test | Their test user registers with `locale: 'en'` |
+
+### How it works
+
+**The requests**
+
+```
+POST /api/auth/register
+{ "email": "you@example.com", "password": "correct horse battery",
+  "timezone": "Asia/Dubai", "locale": "en" }
+
+201 Created
+{ "id": "…", "email": "you@example.com", "timezone": "Asia/Dubai", "locale": "en" }
+```
+
+```
+PATCH /api/auth/me
+{ "locale": "ar" }
+
+200 OK
+{ "id": "…", "email": "you@example.com", "timezone": "Asia/Dubai", "locale": "ar" }
+```
+
+```
+PATCH /api/auth/me
+{ "locale": "fr" }
+
+400 Bad Request
+{ "statusCode": 400, "error": "Bad Request", "code": "validation.failed",
+  "message": ["locale must be one of the following values: en, ar"],
+  "errors": [{ "field": "locale", "code": "isIn" }] }
+```
+
+**1. The column** (`0007_add-user-locale.sql`)
+
+```sql
+ALTER TABLE users
+  ADD COLUMN locale TEXT NOT NULL DEFAULT 'en'
+    CHECK (locale IN ('en', 'ar'));
+
+ALTER TABLE users
+  ALTER COLUMN locale DROP DEFAULT;
+```
+
+Two statements, for a reason. A `NOT NULL` column cannot be added to a table that has rows unless every row gets a value. The default gives the existing users `en`, the only language the app had. Then the default is removed: from here on an `INSERT` that forgets the language fails. It does not quietly become English.
+
+The list is a `CHECK`, like every option list in this schema, so the database refuses `fr` even if the API had a bug.
+
+**2. One list, one type** (`locale.ts`)
+
+```ts
+export const SUPPORTED_LOCALES = ['en', 'ar'] as const;
+export type Locale = (typeof SUPPORTED_LOCALES)[number];
+```
+
+The same pattern as `LIFE_VALUES` and `API_ERRORS`: the array is used at runtime by `@IsIn` and by Swagger, and the type comes from it.
+
+**3. Sent at register, by the browser**
+
+Nobody types their language into a form. The frontend knows which language it is showing (week 8: from a cookie, or from the browser's own language), and sends it with `timezone`.
+
+*Why required, and not optional with English as the fallback?* The frontend can always say, so there is no honest reason for the field to be missing. A missing field would be a bug, and a fallback would hide it.
+
+*Why not read the `Accept-Language` header of each request?* The backend translates nothing, so the language of one request is no use to it. It needs the language of the person, later, when the AI writes to them.
+
+**4. Changing it** (`update-me.dto.ts`, `users.repository.ts`)
+
+`PATCH /api/auth/me` follows the rule set for goals in step 7: only what is sent changes.
+
+| In the body | Result |
+|---|---|
+| `locale` left out | unchanged |
+| `"en"` or `"ar"` | replaced |
+| `null`, or anything else | `400` |
+
+```sql
+UPDATE users
+   SET locale = COALESCE($2::text, locale)
+ WHERE id = $1
+ RETURNING id, email, timezone, locale
+```
+
+A language cannot be cleared, so "not sent" can travel as `NULL` and `COALESCE` keeps the old value. The DTO uses `@ValidateIf(value !== undefined)` and not `@IsOptional()`, for the reason given in step 7: `@IsOptional()` would let `null` through and silently ignore it.
+
+The `id` in the `WHERE` comes from the session cookie, like everywhere else. There is no way to name another user.
+
+The route takes `locale` and nothing more. Changing the timezone or the email raise their own questions and are not part of this step.
+
+**5. What the frontend does with it (week 8)**
+
+When the user picks a language, the frontend switches at once by itself, and calls this route so the choice is kept. After login it reads `locale` from the user it gets back. The backend's own reader comes in week 6: the prompt builder gets `locale` and tells the model which language to write in.
+
+**6. The tests**
+
+| Rule | Test |
+|---|---|
+| The language is saved at register | `saves the language the browser sent` |
+| It must be one the app has, and it must be there | `rejects a language the app does not have…`, `rejects a missing language…` |
+| `PATCH` changes it | `changes the language and returns the user` |
+| It follows the account | `is what GET /auth/me and the next login return` |
+| Left out means unchanged | `changes nothing when the language is left out` |
+| `null` and unknown languages are refused | `refuses null with 400 and changes nothing` |
+| Only the language can be changed here | `refuses a field that cannot be changed here` |
+| Only your own | `leaves another user's language alone`, `needs a login` |
+| The database refuses a bad or missing language | `rejects a language outside the list, and a user without one` |
+| The Swagger examples still work as they are | `accepts every request example exactly as Swagger pre-fills it` |
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0007_add-user-locale` is applied, and all 221 tests pass.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running):
+
+1. **POST /auth/login** with an account you made before today → the user has `"locale": "en"`: the migration filled it in.
+2. **PATCH /auth/me** → *Try it out* → the example is `{ "locale": "ar" }` → *Execute* → `200` with `"locale": "ar"`.
+3. **GET /auth/me** → `"locale": "ar"`.
+4. **PATCH /auth/me** with `{ "locale": "fr" }` → `400`, with `{ "field": "locale", "code": "isIn" }` under `errors`.
+5. **PATCH /auth/me** with `{ "locale": "en" }` to put it back.
+6. **POST /auth/register** → the example now has `"locale": "en"`. With a new email → `201`.
+7. In pgAdmin, `users` has a `locale` column, and every row has `en` or `ar`.

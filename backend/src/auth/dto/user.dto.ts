@@ -1,4 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { SUPPORTED_LOCALES } from '../locale.js';
+import type { Locale } from '../locale.js';
 
 /**
  * A user as the API returns it. Never includes the password hash.
@@ -14,4 +16,11 @@ export class User {
 
   @ApiProperty({ example: 'Asia/Dubai', description: 'An IANA timezone name.' })
   timezone!: string;
+
+  @ApiProperty({
+    enum: SUPPORTED_LOCALES,
+    example: 'en',
+    description: 'The language the app shows this user.',
+  })
+  locale!: Locale;
 }

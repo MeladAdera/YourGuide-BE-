@@ -6,6 +6,7 @@ import { createTestApp } from './helpers/create-test-app.js';
 const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
 const FOREIGN_KEY_VIOLATION = '23503';
+const NOT_NULL_VIOLATION = '23502';
 
 // Proves the database enforces the business rules listed in SCHEMA.md §16.
 describe('Database schema', () => {
@@ -29,8 +30,8 @@ describe('Database schema', () => {
 
   function insertUser(email = 'user@example.com'): Promise<string> {
     return insertReturningId(
-      'INSERT INTO users (email, password_hash, timezone) VALUES ($1, $2, $3)',
-      [email, 'hash', 'UTC'],
+      'INSERT INTO users (email, password_hash, timezone, locale) VALUES ($1, $2, $3, $4)',
+      [email, 'hash', 'UTC', 'en'],
     );
   }
 
@@ -176,6 +177,23 @@ describe('Database schema', () => {
 
     expect(await count('profile_basics')).toBe(0);
     expect(await count('profile_values')).toBe(0);
+  });
+
+  it('rejects a language outside the list, and a user without one', async () => {
+    await expect(
+      pool.query(
+        `INSERT INTO users (email, password_hash, timezone, locale)
+         VALUES ('a@example.com', 'hash', 'UTC', 'fr')`,
+      ),
+    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+    // No default: an INSERT that forgets the language fails, it does not
+    // quietly get English.
+    await expect(
+      pool.query(
+        `INSERT INTO users (email, password_hash, timezone)
+         VALUES ('a@example.com', 'hash', 'UTC')`,
+      ),
+    ).rejects.toMatchObject({ code: NOT_NULL_VIOLATION });
   });
 
   it('rejects the same email in a different letter case', async () => {
