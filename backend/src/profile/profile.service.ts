@@ -1,8 +1,5 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { ApiError } from '../common/api-error.js';
 import { DatabaseService } from '../database/database.service.js';
 import { OnboardingStatus } from './dto/onboarding-status.dto.js';
 import { Profile } from './dto/profile.dto.js';
@@ -26,7 +23,7 @@ export class ProfileService {
   async get(userId: string): Promise<Profile> {
     const profile = await this.sections.findAll(userId);
     if (REQUIRED_SCREENS.some((screen) => profile[screen] === null)) {
-      throw new NotFoundException('Onboarding is not done yet.');
+      throw new ApiError('profile.onboarding_not_done');
     }
     return profile;
   }
@@ -49,12 +46,7 @@ export class ProfileService {
   async requireOnboarded(userId: string): Promise<void> {
     const { missing } = await this.status(userId);
     if (missing.length > 0) {
-      throw new ConflictException({
-        statusCode: 409,
-        error: 'Conflict',
-        message: 'Finish these screens first.',
-        missing,
-      });
+      throw new ApiError('goal.onboarding_required', { missing });
     }
   }
 }

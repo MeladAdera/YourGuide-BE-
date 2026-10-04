@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { minutes, ThrottlerModule } from '@nestjs/throttler';
+import { API_ERRORS } from '../common/api-error.js';
 import { AuthSessionsRepository } from './auth-sessions.repository.js';
 import { AuthController } from './auth.controller.js';
 import { AuthGuard } from './auth.guard.js';
@@ -14,7 +15,7 @@ import { UsersRepository } from './users.repository.js';
     // @UseGuards(ThrottlerGuard); importing the module alone limits nothing.
     ThrottlerModule.forRoot({
       throttlers: [{ ttl: minutes(1), limit: 5 }],
-      errorMessage: 'Too many attempts. Try again in a minute.',
+      errorMessage: API_ERRORS.rate_limited.message,
     }),
   ],
   controllers: [AuthController],

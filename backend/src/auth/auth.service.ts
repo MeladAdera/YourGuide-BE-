@@ -1,11 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import {
-  ConflictException,
-  Injectable,
-  OnModuleInit,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { hash, verify } from 'argon2';
+import { ApiError } from '../common/api-error.js';
 import { DatabaseService, Executor } from '../database/database.service.js';
 import { isUniqueViolation } from '../database/pg-errors.js';
 import { AuthSessionsRepository } from './auth-sessions.repository.js';
@@ -60,9 +56,7 @@ export class AuthService implements OnModuleInit {
     } catch (error) {
       // The database decides whether the email is taken (case-insensitive).
       if (isUniqueViolation(error, 'users_email_unique')) {
-        throw new ConflictException(
-          'An account with this email already exists.',
-        );
+        throw new ApiError('auth.email_taken');
       }
       throw error;
     }
@@ -81,8 +75,8 @@ export class AuthService implements OnModuleInit {
       input.password,
     );
     if (found === undefined || !passwordMatches) {
-      // One message for both cases, for the same reason.
-      throw new UnauthorizedException('Invalid email or password.');
+      // One answer for both cases, for the same reason.
+      throw new ApiError('auth.invalid_credentials');
     }
 
     // Expired sessions are useless rows. Each user removes their own at

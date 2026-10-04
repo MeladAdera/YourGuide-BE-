@@ -142,3 +142,25 @@ Found by using the API, one day after building it. With the seven screens saved 
 The "Check it" steps in `docs/` say *Try it out → Execute*. For screen 7 that failed: the list of picks had no example of its own, so Swagger repeated the one example pick, and the API rightly refuses a value picked twice. Sixteen optional text fields were also published as `object`, because a `string | null` property has no single runtime type.
 
 `test/api-docs-examples.e2e-spec.ts` builds each request body the way Swagger UI does and sends it to the real API, and checks that a field with a text example is published as a string. Run against the code as it was, it reproduces both defects. A list field gets its own `example`; `@Answer` states `type: String`.
+
+## 2026-10-04 — English and Arabic: the API speaks codes, the frontend speaks languages
+
+The app will be used in English and Arabic. There are three kinds of text, and each has one home:
+
+| Kind | Examples | Who writes it in the user's language |
+|---|---|---|
+| App text | buttons, the onboarding questions, option labels, error sentences | The frontend, from one file per language |
+| User text | answers, goal titles, notes | Nobody. It is stored and shown as written |
+| AI text | advice, suggested steps | The backend's AI call, the only place the backend writes for a person |
+
+So the backend never translates. It answers with codes: an error has a `code` (`goal.not_found`), a fixed list is codes (`family`, `between_jobs`, which they already were), and the database stores codes and what the user wrote. The English sentence stays in every error for the developer reading it.
+
+**Rejected: translating in the backend** (`nestjs-i18n`, the request's `Accept-Language`). Buttons and labels must live in the frontend anyway, so wording would have two homes that must be kept in step. With codes there is one file per language, and a test checks a code, which does not break when a sentence is reworded.
+
+**Rejected: translation tables in the database.** The question list is part of the schema, not data (2026-10-03); its wording in each language is part of the frontend, for the same reason.
+
+**Cost:** the two projects share no code, so the frontend's list of codes can fall behind the backend's. A code the frontend does not know gets its general "something went wrong" sentence, and Swagger publishes the full list. And a code can never be renamed once the frontend uses it.
+
+**What has no code:** a crash (500). It is a bug, not an answer.
+
+**The order of work:** the backend first, before Tasks, while there were nine sentences to change: a code on every error (YOU-54), validation errors that name the field and the rule (YOU-55), the user's language on the account for the AI (YOU-56). The AI writes in that language in week 6. The frontend gets its translation files and right-to-left layout in week 8, with its first component.

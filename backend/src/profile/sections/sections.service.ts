@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { ApiError } from '../../common/api-error.js';
 import { DatabaseService } from '../../database/database.service.js';
 import { Profile } from '../dto/profile.dto.js';
 import { Achievements } from './achievements/achievements.dto.js';
@@ -171,7 +172,7 @@ export class SectionsService {
 async function saved<T>(lookup: Promise<T | undefined>): Promise<T> {
   const section = await lookup;
   if (section === undefined) {
-    throw new NotFoundException('This screen is not saved yet.');
+    throw new ApiError('profile.screen_not_saved');
   }
   return section;
 }

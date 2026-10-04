@@ -1,11 +1,7 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { ApiError } from '../common/api-error.js';
 import { DatabaseService } from '../database/database.service.js';
 import { AuthSessionsRepository } from './auth-sessions.repository.js';
 import { hashToken } from './auth.service.js';
@@ -48,7 +44,7 @@ export class AuthGuard implements CanActivate {
     if (userId === undefined) {
       // Thrown, not `return false`: a false from a guard becomes 403
       // Forbidden, and "not logged in" is 401.
-      throw new UnauthorizedException('Not logged in.');
+      throw new ApiError('auth.not_logged_in');
     }
 
     // Handlers read this through @CurrentUser().

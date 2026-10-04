@@ -36,6 +36,7 @@ An app that plays that missing role:
 |---|---|
 | Users | Me and other people (email + password accounts) |
 | Platform | Web app (browser) |
+| Languages | English and Arabic. The frontend translates; the API answers with codes |
 | Frontend | Next.js (App Router) + TypeScript |
 | Backend | NestJS + TypeScript |
 | Database | PostgreSQL, raw SQL with `pg` (no ORM) |
@@ -246,6 +247,7 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 - Every repository method takes `userId`. No query on user data without it.
 - Rate limit `register` and `login` (`@nestjs/throttler`).
 - The app never states or stores a diagnosis. Reflection answers are signals for personalisation, never labels or scores.
+- The API speaks codes, the frontend speaks languages. An error is a code from `src/common/api-error.ts`; a fixed list is codes. No sentence for the user is written in the backend, except by the AI.
 - Write every important decision in `DECISIONS.md` with the reason.
 
 ## 12. Open Questions (decide later)

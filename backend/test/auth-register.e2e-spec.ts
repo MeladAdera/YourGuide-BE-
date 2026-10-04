@@ -94,6 +94,10 @@ describe('POST /api/auth/register', () => {
     const response = await register({ ...VALID, password: 'another password' });
 
     expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      code: 'auth.email_taken',
+      message: 'An account with this email already exists.',
+    });
     expect(await countUsers()).toBe(1);
   });
 

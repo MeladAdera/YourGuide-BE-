@@ -1,12 +1,16 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types.js';
+import { API_ERRORS } from '../src/common/api-error.js';
 import { createTestApp } from './helpers/create-test-app.js';
 
 interface OpenApiDocument {
   paths: Record<string, Record<string, { security?: object[] }>>;
   components: {
-    schemas: Record<string, { properties?: Record<string, { type?: string }> }>;
+    schemas: Record<
+      string,
+      { properties?: Record<string, { type?: string; enum?: string[] }> }
+    >;
   };
 }
 
@@ -69,6 +73,21 @@ describe('API docs', () => {
       'email',
       'timezone',
     ]);
+  });
+
+  it('publishes the shape of an error and the list of error codes', async () => {
+    const response = await request(app.getHttpServer()).get('/api/docs-json');
+
+    const { schemas } = (response.body as OpenApiDocument).components;
+    expect(Object.keys(schemas['ApiErrorBody']?.properties ?? {})).toEqual([
+      'statusCode',
+      'error',
+      'code',
+      'message',
+    ]);
+    expect(schemas['ApiErrorBody']?.properties?.['code']?.enum).toEqual(
+      Object.keys(API_ERRORS),
+    );
   });
 
   it('marks GET /auth/me as needing the session cookie', async () => {

@@ -171,6 +171,7 @@ describe('/api/goals', () => {
     expect(refused.body).toEqual({
       statusCode: 409,
       error: 'Conflict',
+      code: 'goal.onboarding_required',
       message: 'Finish these screens first.',
       missing: [
         'situation',
@@ -338,6 +339,7 @@ describe('/api/goals', () => {
 
     expect(response.status).toBe(409);
     expect(response.body).toMatchObject({
+      code: 'goal.has_work_history',
       message: 'This has work history. Archive the goal instead.',
     });
     expect(await count('goals')).toBe(1);
@@ -379,16 +381,23 @@ describe('/api/goals', () => {
     const renamed = await call('patch', missing, { body: { title: 'x' } });
 
     expect(renamed.status).toBe(404);
-    expect(renamed.body).toMatchObject({ message: 'Goal not found.' });
+    expect(renamed.body).toMatchObject({
+      code: 'goal.not_found',
+      message: 'Goal not found.',
+    });
     expect((await call('post', `${missing}/archive`)).status).toBe(404);
     expect((await call('post', `${missing}/unarchive`)).status).toBe(404);
     expect((await call('delete', missing)).status).toBe(404);
   });
 
   it('answers 400 for an id that is not a UUID', async () => {
-    expect(
-      (await call('patch', '/not-a-uuid', { body: { title: 'x' } })).status,
-    ).toBe(400);
+    const renamed = await call('patch', '/not-a-uuid', {
+      body: { title: 'x' },
+    });
+
+    expect(renamed.status).toBe(400);
+    // NestJS throws this one itself. It still gets a code.
+    expect(renamed.body).toMatchObject({ code: 'bad_request' });
     expect((await call('post', '/not-a-uuid/archive')).status).toBe(400);
     expect((await call('post', '/not-a-uuid/unarchive')).status).toBe(400);
     expect((await call('delete', '/not-a-uuid')).status).toBe(400);

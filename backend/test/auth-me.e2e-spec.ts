@@ -87,6 +87,12 @@ describe('GET /api/auth/me', () => {
     const response = await me();
 
     expect(response.status).toBe(401);
-    expect(response.body).toMatchObject({ message: 'Not logged in.' });
+    // The whole shape of an error: the code is what a client translates.
+    expect(response.body).toEqual({
+      statusCode: 401,
+      error: 'Unauthorized',
+      code: 'auth.not_logged_in',
+      message: 'Not logged in.',
+    });
   });
 });

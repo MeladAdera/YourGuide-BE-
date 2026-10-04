@@ -71,6 +71,7 @@ describe('/api/profile/sections/values', () => {
 
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({
+      code: 'profile.screen_not_saved',
       message: 'This screen is not saved yet.',
     });
   });

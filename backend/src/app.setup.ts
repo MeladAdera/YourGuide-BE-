@@ -1,6 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import type { Express } from 'express';
+import { ErrorCodeFilter } from './common/error-code.filter.js';
 import { AppConfig } from './config/app-config.js';
 
 /**
@@ -22,4 +23,6 @@ export function configureApp(app: INestApplication): void {
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }),
   );
+  // Every error answer gets a code, the name a client translates by.
+  app.useGlobalFilters(new ErrorCodeFilter());
 }

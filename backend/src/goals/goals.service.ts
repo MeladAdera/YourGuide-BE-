@@ -1,15 +1,9 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { ApiError } from '../common/api-error.js';
 import { DatabaseService } from '../database/database.service.js';
 import { isForeignKeyViolation } from '../database/pg-errors.js';
 import { ProfileService } from '../profile/profile.service.js';
-import {
-  HAS_WORK_HISTORY,
-  SESSION_STEP_FK,
-} from '../sessions/session-constraints.js';
+import { SESSION_STEP_FK } from '../sessions/session-constraints.js';
 import { CreateGoalDto } from './dto/create-goal.dto.js';
 import { Goal } from './dto/goal.dto.js';
 import { UpdateGoalDto } from './dto/update-goal.dto.js';
@@ -66,19 +60,15 @@ export class GoalsService {
       deleted = await this.goals.delete(this.db.pool, userId, goalId);
     } catch (error) {
       if (isForeignKeyViolation(error, SESSION_STEP_FK)) {
-        throw new ConflictException(
-          `${HAS_WORK_HISTORY} Archive the goal instead.`,
-        );
+        throw new ApiError('goal.has_work_history');
       }
       throw error;
     }
     if (!deleted) {
-      throw new NotFoundException(NOT_FOUND);
+      throw new ApiError('goal.not_found');
     }
   }
 }
-
-const NOT_FOUND = 'Goal not found.';
 
 /**
  * Turns "no row" into 404. The goal does not exist, or it belongs to
@@ -87,7 +77,7 @@ const NOT_FOUND = 'Goal not found.';
 async function found(lookup: Promise<Goal | undefined>): Promise<Goal> {
   const goal = await lookup;
   if (goal === undefined) {
-    throw new NotFoundException(NOT_FOUND);
+    throw new ApiError('goal.not_found');
   }
   return goal;
 }

@@ -61,7 +61,10 @@ describe('rate limit on register and login', () => {
     const sixth = await login('wrong password');
 
     expect(sixth.status).toBe(429);
-    expect(sixth.body).toMatchObject({
+    expect(sixth.body).toEqual({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      code: 'rate_limited',
       message: 'Too many attempts. Try again in a minute.',
     });
     expect(sixth.get('Retry-After')).toBeDefined();

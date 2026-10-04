@@ -117,6 +117,10 @@ describe('POST /api/auth/login', () => {
     });
 
     expect(response.status).toBe(401);
+    expect(response.body).toMatchObject({
+      code: 'auth.invalid_credentials',
+      message: 'Invalid email or password.',
+    });
     expect(sessionCookie(response)).toBeUndefined();
     expect(await sessionHashes()).toHaveLength(1);
   });

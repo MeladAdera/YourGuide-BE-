@@ -7,6 +7,3 @@
  * Must match the constraint name in SCHEMA.md §9.
  */
 export const SESSION_STEP_FK = 'sessions_step_id_fkey';
-
-/** What the API says when a delete is refused because of work history. */
-export const HAS_WORK_HISTORY = 'This has work history.';

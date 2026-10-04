@@ -11,9 +11,14 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | 5 | [Onboarding: direction, completion and status](#step-5--onboarding-direction-completion-and-status) | YOU-52 | Done |
 | 6 | [Goals](#step-6--goals) | YOU-18 | Done |
 | 7 | [The direction moves onto goals](#step-7--the-direction-moves-onto-goals) | YOU-53 | Done |
-| 8 | Tasks | YOU-19 | Not started |
+| 8 | [Every error carries a code](#step-8--every-error-carries-a-code) | YOU-54 | Done |
+| 9 | Validation errors name the field and the rule | YOU-55 | Not started |
+| 10 | The user's language on the account | YOU-56 | Not started |
+| 11 | Tasks | YOU-19 | Not started |
 
 Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues, YOU-49 to YOU-52, were created from that design. Step 7 was added on 2026-10-04, after using the API showed that screen 8 and goals were two homes for one thing.
+
+Steps 8 to 10 were added on 2026-10-04, when English and Arabic were chosen as the app's two languages. They come before tasks so that every module built after them follows the rule from its first day.
 
 All commands on this page run inside `backend/`.
 
@@ -940,3 +945,164 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 5. **POST /goals** → `201`, with `whyItMatters`. Copy the `id`.
 6. **PATCH /goals/{id}** with only `{ "title": "A new title" }` → the why, obstacle and first outcome are unchanged.
 7. **PATCH /goals/{id}** with `{ "obstacle": null }` → `obstacle: null`. With `{ "title": null }` → `400`.
+
+---
+
+## Step 8 — Every error carries a code
+
+Steps 8 to 10 prepare the backend for two languages. The decision behind them is in `DECISIONS.md` (2026-10-04, *English and Arabic*): **the API speaks codes, the frontend speaks languages.** The backend never translates. It gives the frontend what it needs to translate.
+
+Earlier sections on this page show error answers as they were when those steps were built, without `code`.
+
+### Why
+
+The app will be used in English and Arabic. Before this step, an error looked like this:
+
+```json
+{ "statusCode": 404, "error": "Not Found", "message": "Goal not found." }
+```
+
+To show that in Arabic, the frontend would have to recognise the English sentence. That fails in two ways:
+
+- **Rewording breaks it.** Change `Goal not found.` to `This goal does not exist.` and the frontend no longer knows which error it is. A sentence is not a name.
+- **Some sentences are not ours.** An id that is not a UUID answers `Validation failed (uuid is expected)`. An unknown route answers `Cannot GET /api/nothing`. NestJS writes those, and can change them in any release.
+
+A code is a stable name. The frontend keeps one sentence per code in `en.json` and one in `ar.json`, and the sentence in the answer becomes what it always should have been: a note for the developer reading it.
+
+What needs this later:
+
+- **The frontend's API client (week 8)** turns a code into a sentence in the user's language.
+- **Every module from Tasks on** adds its errors as codes from its first day. Now there were nine sentences in three modules to change; in week 7 there would have been thirty.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `src/common/api-error.ts` | Boundary | The list of every code, the `ApiError` exception, and `ApiErrorBody` for Swagger |
+| `src/common/error-code.filter.ts` | Boundary | Writes every error answer in one shape; gives a code to the errors NestJS throws by itself |
+| `src/app.setup.ts` | Setup | Registers the filter, for the real server and the e2e tests alike |
+| `src/auth/auth.guard.ts`, `src/auth/auth.service.ts` | Guard, service | Three auth errors thrown by code |
+| `src/auth/auth.module.ts` | Module | The rate-limit sentence is read from the list |
+| `src/profile/profile.service.ts`, `src/profile/sections/sections.service.ts` | Service | Three profile errors thrown by code |
+| `src/goals/goals.service.ts` | Service | Two goal errors thrown by code |
+| `src/sessions/session-constraints.ts` | Constant | `HAS_WORK_HISTORY` removed: the sentence lives in the list now |
+| `src/api-docs.ts` | Docs | Publishes `ApiErrorBody` and says what a code is for |
+| `test/error-codes.e2e-spec.ts` | Test | An unknown route gets a code |
+| Nine existing e2e files | Test | Each test that checks an error sentence also checks its code |
+
+### How it works
+
+**The answer now**
+
+```json
+{ "statusCode": 404, "error": "Not Found", "code": "goal.not_found", "message": "Goal not found." }
+```
+
+Nothing was taken away. `message` is word for word what it was, so Swagger reads the same as before.
+
+**1. One list** (`api-error.ts`)
+
+```ts
+export const API_ERRORS = {
+  'goal.not_found': { status: HttpStatus.NOT_FOUND, message: 'Goal not found.' },
+  …
+} as const satisfies Record<string, { status: HttpStatus; message: string }>;
+
+export type ApiErrorCode = keyof typeof API_ERRORS;
+```
+
+| Code | Status | Sentence |
+|---|---|---|
+| `auth.not_logged_in` | 401 | Not logged in. |
+| `auth.invalid_credentials` | 401 | Invalid email or password. |
+| `auth.email_taken` | 409 | An account with this email already exists. |
+| `profile.onboarding_not_done` | 404 | Onboarding is not done yet. |
+| `profile.screen_not_saved` | 404 | This screen is not saved yet. |
+| `goal.onboarding_required` | 409 | Finish these screens first. (with `missing`) |
+| `goal.not_found` | 404 | Goal not found. |
+| `goal.has_work_history` | 409 | This has work history. Archive the goal instead. |
+| `bad_request` | 400 | whatever NestJS said |
+| `not_found` | 404 | whatever NestJS said |
+| `rate_limited` | 429 | Too many attempts. Try again in a minute. |
+
+*Why one file, and not a constant in each module?* This list is the contract with the frontend: it is exactly the set of keys the translation files need under `errors`. One file can be read top to bottom when translating. It is the same pattern as `LIFE_VALUES`: the object exists at runtime, the type is derived from it, so the two cannot disagree.
+
+*Why is the status in the list?* So a code cannot be sent with the wrong status. Nobody can throw `goal.not_found` as a 409 by mistake.
+
+*How a code is named:* `feature.what_happened`, lower case. The last three have no feature because they belong to no module. **A code is never renamed once the frontend uses it.** The sentence can be reworded any day.
+
+**2. Throwing one** (`ApiError`)
+
+```ts
+throw new ApiError('goal.not_found');
+throw new ApiError('goal.onboarding_required', { missing });
+```
+
+Before, the 409 for a goal before onboarding spelled out `statusCode`, `error` and `message` by hand. Now the code is all a service names. The second argument adds fields to the answer, such as the `missing` screens, which were always codes (`selfView`, `values`) and need no change.
+
+**3. The errors NestJS throws by itself** (`error-code.filter.ts`)
+
+Three errors never pass through our services:
+
+| Thrown by | When | Gets the code |
+|---|---|---|
+| `ParseUUIDPipe` | an id that is not a UUID | `bad_request` |
+| The router | an unknown route under `/api` | `not_found` |
+| `ThrottlerGuard` | the sixth register or login in a minute | `rate_limited` |
+
+A *filter* is NestJS's name for the one function every error passes through on its way out. `ErrorCodeFilter` writes each answer in the same shape:
+
+```ts
+.json({
+  statusCode: status,
+  error: STATUS_CODES[status],        // "Not Found", from Node
+  code: CODE_BY_STATUS[status],       // only if the error brought none
+  ...(typeof body === 'string' ? { message: body } : body),
+});
+```
+
+The exception's own fields are spread last, so they win. An `ApiError` keeps its code; a NestJS error gets one from its status. The sentence is never changed. Headers set before the error, such as `Retry-After` on a 429, stay.
+
+*Why a filter, and not a fix at each of the three places?* Three places today, more with every pipe or guard added later. The filter is one place, and it also makes the shape the same everywhere: the 429 used to be the only error without an `error` field.
+
+Until step 9, a body refused by a DTO also carries the general `bad_request`. Step 9 gives validation its own code and names the field.
+
+**4. What has no code**
+
+- **A crash (500).** It is a bug, not an answer, so it is not in the list. NestJS logs it and answers `Internal server error` as before.
+- **A URL outside `/api`.** Express answers that with its own page before NestJS is involved. The frontend never calls one.
+
+The frontend rule that covers both: *no code, or a code I do not know → show the general "something went wrong" sentence.* It needs that sentence anyway for when the network is down.
+
+**5. In Swagger** (`api-docs.ts`)
+
+`ApiErrorBody` describes the shape, and its `code` field lists every code. No route returns it as a success, so Swagger would not find the class by itself; `extraModels` adds it. It is at the bottom of the page under **Schemas**.
+
+**6. The tests**
+
+| Rule | Test |
+|---|---|
+| The full shape of an error | `answers 401, not 403, so the client knows to show the login page` |
+| The extra fields survive | `refuses a goal until the reflection screens are saved: 409` |
+| An unknown route gets a code | `gives an unknown route under /api the code not_found` |
+| A bad id gets a code | `answers 400 for an id that is not a UUID` |
+| The rate limit gets a code, and keeps `Retry-After` | `allows 5 login attempts a minute and refuses the 6th with 429` |
+| The list in Swagger is the list in the code | `publishes the shape of an error and the list of error codes` |
+
+### Check it
+
+```bash
+pnpm test:e2e
+```
+
+All 206 tests pass.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running):
+
+1. **POST /auth/logout** → *Execute*, so the browser has no cookie. **GET /auth/me** → `401` with `"code": "auth.not_logged_in"`.
+2. **POST /auth/register** with a new email → *Execute*. Press *Execute* again → `409` with `"code": "auth.email_taken"`.
+3. **POST /goals** → `409` with `"code": "goal.onboarding_required"` and the six names under `missing`.
+4. **PATCH /goals/{id}** with `00000000-0000-4000-8000-000000000000` as the id → `404` with `"code": "goal.not_found"`.
+5. **PATCH /goals/{id}** with `abc` as the id → `400` with `"code": "bad_request"`.
+6. Open <http://localhost:3001/api/nothing> in the browser → `"code": "not_found"`.
+7. At the bottom of the Swagger page, **Schemas → ApiErrorBody → code** lists the eleven codes.

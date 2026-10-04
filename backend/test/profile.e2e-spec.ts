@@ -87,6 +87,7 @@ describe('GET /api/profile', () => {
 
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({
+      code: 'profile.onboarding_not_done',
       message: 'Onboarding is not done yet.',
     });
   });
