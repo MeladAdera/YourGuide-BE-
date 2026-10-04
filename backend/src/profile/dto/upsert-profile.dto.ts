@@ -1,4 +1,4 @@
-import { Answer } from '../answer.decorator.js';
+import { Answer } from '../../common/answer.decorator.js';
 
 /**
  * Screen 8, your direction. PUT sends the whole screen, every time. It is

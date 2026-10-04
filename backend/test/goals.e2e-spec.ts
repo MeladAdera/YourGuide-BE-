@@ -13,12 +13,22 @@ const USER = {
   password: 'correct horse battery',
   timezone: 'Asia/Dubai',
 };
+/** A goal with every answer, as POST sends it. */
+const GOAL = {
+  title: 'Ship my first product',
+  whyItMatters: 'I want to build my own products.',
+  obstacle: 'I polish instead of publishing.',
+  firstOutcome: 'One demo online.',
+};
 const TIMESTAMP = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) as unknown;
 const UUID = expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown;
 
 interface GoalBody {
   id: string;
   title: string;
+  whyItMatters: string;
+  obstacle: string | null;
+  firstOutcome: string | null;
   createdAt: string;
   archivedAt: string | null;
 }
@@ -57,11 +67,14 @@ describe('/api/goals', () => {
     return options.body === undefined ? req : req.send(options.body);
   }
 
-  async function createGoal(
-    title = 'Ship my first product',
-  ): Promise<GoalBody> {
-    const response = await call('post', '', { body: { title } });
+  /** A goal with every answer; `title` only names it apart from others. */
+  async function createGoal(title = GOAL.title): Promise<GoalBody> {
+    const response = await call('post', '', { body: { ...GOAL, title } });
     return response.body as GoalBody;
+  }
+
+  async function onlyGoal(): Promise<GoalBody | undefined> {
+    return ((await call('get')).body as GoalBody[])[0];
   }
 
   async function titles(query = ''): Promise<string[]> {
@@ -112,15 +125,13 @@ describe('/api/goals', () => {
     ({ cookie, userId } = await register(USER.email));
   });
 
-  it('creates a goal and lists it as active', async () => {
-    const created = await call('post', '', {
-      body: { title: 'Ship my first product' },
-    });
+  it('creates a goal with its why and lists it as active', async () => {
+    const created = await call('post', '', { body: GOAL });
 
     expect(created.status).toBe(201);
     expect(created.body).toEqual({
       id: UUID,
-      title: 'Ship my first product',
+      ...GOAL,
       createdAt: TIMESTAMP,
       archivedAt: null,
     });
@@ -128,6 +139,15 @@ describe('/api/goals', () => {
     expect(active.status).toBe(200);
     expect(active.body).toEqual([created.body]);
     expect((await call('get', '?archived=true')).body).toEqual([]);
+  });
+
+  it('returns null for the optional answers left out', async () => {
+    const created = await call('post', '', {
+      body: { title: GOAL.title, whyItMatters: GOAL.whyItMatters },
+    });
+
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ obstacle: null, firstOutcome: null });
   });
 
   it('lists goals in the order they were created', async () => {
@@ -143,16 +163,80 @@ describe('/api/goals', () => {
     ]);
   });
 
-  it('renames a goal', async () => {
-    const goal = await createGoal('Old title');
+  describe('PATCH changes only the fields that are sent', () => {
+    it('renames a goal and leaves every other answer alone', async () => {
+      const goal = await createGoal('Old title');
 
-    const renamed = await call('patch', `/${goal.id}`, {
-      body: { title: 'New title' },
+      const renamed = await call('patch', `/${goal.id}`, {
+        body: { title: 'New title' },
+      });
+
+      expect(renamed.status).toBe(200);
+      expect(renamed.body).toEqual({ ...goal, title: 'New title' });
+      expect(await onlyGoal()).toEqual(renamed.body);
     });
 
-    expect(renamed.status).toBe(200);
-    expect(renamed.body).toEqual({ ...goal, title: 'New title' });
-    expect(await titles()).toEqual(['New title']);
+    it('rewrites the why alone', async () => {
+      const goal = await createGoal();
+
+      const changed = await call('patch', `/${goal.id}`, {
+        body: { whyItMatters: 'I want to stop waiting for permission.' },
+      });
+
+      expect(changed.status).toBe(200);
+      expect(changed.body).toEqual({
+        ...goal,
+        whyItMatters: 'I want to stop waiting for permission.',
+      });
+    });
+
+    it('clears an optional answer with null and keeps the one left out', async () => {
+      const goal = await createGoal();
+
+      const cleared = await call('patch', `/${goal.id}`, {
+        body: { obstacle: null },
+      });
+
+      expect(cleared.status).toBe(200);
+      expect(cleared.body).toEqual({ ...goal, obstacle: null });
+
+      const set = await call('patch', `/${goal.id}`, {
+        body: { obstacle: 'Back again.', firstOutcome: null },
+      });
+      expect(set.body).toEqual({
+        ...goal,
+        obstacle: 'Back again.',
+        firstOutcome: null,
+      });
+    });
+
+    it('changes nothing when nothing is sent', async () => {
+      const goal = await createGoal();
+
+      const response = await call('patch', `/${goal.id}`, { body: {} });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(goal);
+    });
+
+    it.each([
+      ['null for the title', { title: null }],
+      ['null for the why', { whyItMatters: null }],
+      ['an empty title', { title: '' }],
+      ['a title that is not text', { title: 42 }],
+      ['a title longer than 200 characters', { title: 'a'.repeat(201) }],
+      ['an empty why', { whyItMatters: '' }],
+      ['a why longer than 1000 characters', { whyItMatters: 'a'.repeat(1001) }],
+      ['an empty obstacle (null is how to clear it)', { obstacle: '' }],
+      ['an unknown field', { title: 'Fine', userId: 'someone-else' }],
+    ])('refuses %s with 400 and changes nothing', async (_name, body) => {
+      const goal = await createGoal();
+
+      const response = await call('patch', `/${goal.id}`, { body });
+
+      expect(response.status).toBe(400);
+      expect(await onlyGoal()).toEqual(goal);
+    });
   });
 
   it('archive hides the goal from the active list; unarchive restores it', async () => {
@@ -273,9 +357,7 @@ describe('/api/goals', () => {
     const as = null;
 
     expect((await call('get', '', { as })).status).toBe(401);
-    expect((await call('post', '', { as, body: { title: 'x' } })).status).toBe(
-      401,
-    );
+    expect((await call('post', '', { as, body: GOAL })).status).toBe(401);
     expect(
       (await call('patch', `/${goal.id}`, { as, body: { title: 'x' } })).status,
     ).toBe(401);
@@ -289,27 +371,26 @@ describe('/api/goals', () => {
     expect(await count('goals')).toBe(1);
   });
 
-  describe.each([
-    ['a missing title', {}],
-    ['an empty title', { title: '' }],
-    ['a title that is not text', { title: 42 }],
-    ['a title longer than 200 characters', { title: 'a'.repeat(201) }],
-    ['an unknown field', { title: 'Fine', userId: 'someone-else' }],
-  ])('%s', (_name, body) => {
-    it('is refused on create with 400 and saves nothing', async () => {
-      const response = await call('post', '', { body });
+  it.each([
+    ['a missing title', { whyItMatters: GOAL.whyItMatters }],
+    ['a missing why', { title: GOAL.title }],
+    ['an empty title', { ...GOAL, title: '' }],
+    ['an empty why', { ...GOAL, whyItMatters: '' }],
+    ['a title that is not text', { ...GOAL, title: 42 }],
+    ['a title longer than 200 characters', { ...GOAL, title: 'a'.repeat(201) }],
+    [
+      'a why longer than 1000 characters',
+      { ...GOAL, whyItMatters: 'a'.repeat(1001) },
+    ],
+    [
+      'an obstacle longer than 1000 characters',
+      { ...GOAL, obstacle: 'a'.repeat(1001) },
+    ],
+    ['an unknown field', { ...GOAL, userId: 'someone-else' }],
+  ])('refuses to create with %s: 400, nothing saved', async (_name, body) => {
+    const response = await call('post', '', { body });
 
-      expect(response.status).toBe(400);
-      expect(await count('goals')).toBe(0);
-    });
-
-    it('is refused on rename with 400 and changes nothing', async () => {
-      const goal = await createGoal('Unchanged');
-
-      const response = await call('patch', `/${goal.id}`, { body });
-
-      expect(response.status).toBe(400);
-      expect(await titles()).toEqual(['Unchanged']);
-    });
+    expect(response.status).toBe(400);
+    expect(await count('goals')).toBe(0);
   });
 });

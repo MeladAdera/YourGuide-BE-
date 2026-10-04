@@ -1,4 +1,4 @@
-import { Answer, MAX_LONG_ANSWER } from '../../answer.decorator.js';
+import { Answer, MAX_LONG_ANSWER } from '../../../common/answer.decorator.js';
 
 /**
  * Screen 5, how you see yourself: "who am I?", asked after the concrete

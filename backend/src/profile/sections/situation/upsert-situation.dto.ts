@@ -1,4 +1,4 @@
-import { Answer } from '../../answer.decorator.js';
+import { Answer } from '../../../common/answer.decorator.js';
 
 /** Screen 2, your days now: "where am I now?", before any talk of goals. */
 export class UpsertSituationDto {

@@ -8,7 +8,7 @@ import {
   IsIn,
   ValidateNested,
 } from 'class-validator';
-import { Answer, MAX_NOTE } from '../../answer.decorator.js';
+import { Answer, MAX_NOTE } from '../../../common/answer.decorator.js';
 import { LIFE_VALUES, MAX_VALUES, MIN_VALUES } from './life-values.js';
 import type { LifeValue } from './life-values.js';
 

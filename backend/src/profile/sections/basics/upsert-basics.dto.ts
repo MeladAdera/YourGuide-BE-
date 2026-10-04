@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsISO31661Alpha2, IsOptional } from 'class-validator';
-import { Answer, MAX_SHORT_ANSWER } from '../../answer.decorator.js';
+import { Answer, MAX_SHORT_ANSWER } from '../../../common/answer.decorator.js';
 import {
   AGE_RANGES,
   EDUCATION_LEVELS,

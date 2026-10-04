@@ -24,9 +24,9 @@ interface AnswerOptions {
 }
 
 /**
- * A free-text onboarding answer: a non-empty string up to `max` characters.
- * One decorator, so every answer field follows the same rule and Swagger
- * describes it the same way.
+ * A free-text answer: a non-empty string up to `max` characters. Used by
+ * the onboarding screens and by goals. One decorator, so every answer field
+ * follows the same rule and Swagger describes it the same way.
  */
 export function Answer(options: AnswerOptions): PropertyDecorator {
   const max = options.max ?? MAX_ANSWER;

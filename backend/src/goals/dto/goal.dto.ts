@@ -8,6 +8,17 @@ export class Goal {
   @ApiProperty({ example: 'Ship my first product' })
   title!: string;
 
+  @ApiProperty({
+    example: 'I want to build my own products without waiting for anyone.',
+  })
+  whyItMatters!: string;
+
+  @ApiProperty({ nullable: true, type: String })
+  obstacle!: string | null;
+
+  @ApiProperty({ nullable: true, type: String })
+  firstOutcome!: string | null;
+
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 

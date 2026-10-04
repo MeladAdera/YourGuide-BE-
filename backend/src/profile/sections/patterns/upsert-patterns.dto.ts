@@ -1,4 +1,4 @@
-import { Answer } from '../../answer.decorator.js';
+import { Answer } from '../../../common/answer.decorator.js';
 
 /**
  * Screen 4, what gets in the way: patterns the person already knows about.

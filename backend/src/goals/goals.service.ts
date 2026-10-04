@@ -9,8 +9,9 @@ import {
   HAS_WORK_HISTORY,
   SESSION_STEP_FK,
 } from '../sessions/session-constraints.js';
+import { CreateGoalDto } from './dto/create-goal.dto.js';
 import { Goal } from './dto/goal.dto.js';
-import { GoalTitleDto } from './dto/goal-title.dto.js';
+import { UpdateGoalDto } from './dto/update-goal.dto.js';
 import { GoalsRepository } from './goals.repository.js';
 
 @Injectable()
@@ -24,12 +25,12 @@ export class GoalsService {
     return this.goals.list(this.db.pool, userId, archived);
   }
 
-  create(userId: string, input: GoalTitleDto): Promise<Goal> {
-    return this.goals.create(this.db.pool, userId, input.title);
+  create(userId: string, input: CreateGoalDto): Promise<Goal> {
+    return this.goals.create(this.db.pool, userId, input);
   }
 
-  rename(userId: string, goalId: string, input: GoalTitleDto): Promise<Goal> {
-    return found(this.goals.rename(this.db.pool, userId, goalId, input.title));
+  update(userId: string, goalId: string, input: UpdateGoalDto): Promise<Goal> {
+    return found(this.goals.update(this.db.pool, userId, goalId, input));
   }
 
   archive(userId: string, goalId: string): Promise<Goal> {

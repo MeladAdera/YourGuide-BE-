@@ -579,7 +579,16 @@ CREATE TABLE goals (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
   -- NULL = active. Set to the moment the goal was archived.
-  archived_at TIMESTAMPTZ
+  archived_at TIMESTAMPTZ,
+
+  -- "Why does it matter to you?" Required: every goal carries its own why.
+  why_it_matters TEXT NOT NULL,
+
+  -- "What might get in the way?" Optional.
+  obstacle TEXT,
+
+  -- "What would be the first sign you are moving?" Optional.
+  first_outcome TEXT
 );
 
 CREATE INDEX goals_user_idx

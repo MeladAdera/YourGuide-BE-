@@ -1,17 +1,23 @@
 import { Injectable } from '@nestjs/common';
 import { Executor } from '../database/database.service.js';
 import { onlyRow } from '../database/only-row.js';
+import { CreateGoalDto } from './dto/create-goal.dto.js';
 import { Goal } from './dto/goal.dto.js';
+import { UpdateGoalDto } from './dto/update-goal.dto.js';
 
 /** One row of `goals`, as PostgreSQL returns it. */
 interface GoalRow {
   id: string;
   title: string;
+  why_it_matters: string;
+  obstacle: string | null;
+  first_outcome: string | null;
   created_at: Date;
   archived_at: Date | null;
 }
 
-const COLUMNS = 'id, title, created_at, archived_at';
+const COLUMNS =
+  'id, title, why_it_matters, obstacle, first_outcome, created_at, archived_at';
 
 /**
  * Every method takes `userId` and every statement has `user_id = $n` in its
@@ -38,27 +44,60 @@ export class GoalsRepository {
   async create(
     executor: Executor,
     userId: string,
-    title: string,
+    input: CreateGoalDto,
   ): Promise<Goal> {
     const { rows } = await executor.query<GoalRow>(
-      `INSERT INTO goals (user_id, title) VALUES ($1, $2)
+      `INSERT INTO goals (
+         user_id, title, why_it_matters, obstacle, first_outcome
+       )
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING ${COLUMNS}`,
-      [userId, title],
+      [
+        userId,
+        input.title,
+        input.whyItMatters,
+        input.obstacle ?? null,
+        input.firstOutcome ?? null,
+      ],
     );
     return toGoal(onlyRow(rows, 'INSERT INTO goals'));
   }
 
-  async rename(
+  /**
+   * Changes only what was sent, in one statement.
+   *
+   * The two required answers cannot be cleared, so "not sent" can travel
+   * as NULL and COALESCE keeps the old value.
+   *
+   * The two optional answers can be cleared, so NULL already means
+   * something ("clear it") and cannot also mean "not sent". Each one
+   * travels as a pair: a flag saying whether it was sent, and the value.
+   */
+  async update(
     executor: Executor,
     userId: string,
     goalId: string,
-    title: string,
+    input: UpdateGoalDto,
   ): Promise<Goal | undefined> {
     const { rows } = await executor.query<GoalRow>(
-      `UPDATE goals SET title = $3
+      `UPDATE goals
+          SET title = COALESCE($3::text, title),
+              why_it_matters = COALESCE($4::text, why_it_matters),
+              obstacle = CASE WHEN $5::boolean THEN $6::text ELSE obstacle END,
+              first_outcome =
+                CASE WHEN $7::boolean THEN $8::text ELSE first_outcome END
         WHERE id = $2 AND user_id = $1
         RETURNING ${COLUMNS}`,
-      [userId, goalId, title],
+      [
+        userId,
+        goalId,
+        input.title ?? null,
+        input.whyItMatters ?? null,
+        input.obstacle !== undefined,
+        input.obstacle ?? null,
+        input.firstOutcome !== undefined,
+        input.firstOutcome ?? null,
+      ],
     );
     const row = rows[0];
     return row === undefined ? undefined : toGoal(row);
@@ -120,6 +159,9 @@ function toGoal(row: GoalRow): Goal {
   return {
     id: row.id,
     title: row.title,
+    whyItMatters: row.why_it_matters,
+    obstacle: row.obstacle,
+    firstOutcome: row.first_outcome,
     createdAt: row.created_at,
     archivedAt: row.archived_at,
   };

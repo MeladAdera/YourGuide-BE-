@@ -43,8 +43,8 @@ describe('Database schema', () => {
   }> {
     const userId = await insertUser();
     const goalId = await insertReturningId(
-      'INSERT INTO goals (user_id, title) VALUES ($1, $2)',
-      [userId, 'Goal'],
+      'INSERT INTO goals (user_id, title, why_it_matters) VALUES ($1, $2, $3)',
+      [userId, 'Goal', 'Why'],
     );
     const taskId = await insertReturningId(
       'INSERT INTO tasks (user_id, goal_id, title) VALUES ($1, $2, $3)',

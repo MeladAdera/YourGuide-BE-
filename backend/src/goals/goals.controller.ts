@@ -24,15 +24,16 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator.js';
+import { CreateGoalDto } from './dto/create-goal.dto.js';
 import { Goal } from './dto/goal.dto.js';
-import { GoalTitleDto } from './dto/goal-title.dto.js';
 import { ListGoalsQuery } from './dto/list-goals.query.js';
+import { UpdateGoalDto } from './dto/update-goal.dto.js';
 import { GoalsService } from './goals.service.js';
 
 const NOT_FOUND = 'No such goal, or it belongs to someone else.';
 const BAD_ID = 'The id is not a UUID.';
-const BAD_TITLE =
-  'A missing or empty title, one longer than 200 characters, or an unknown field.';
+const BAD_ANSWER =
+  'A missing or empty required answer, an answer that is too long, or an unknown field.';
 
 // No @Public() anywhere here: every route needs a login. The decorators on
 // the class apply to every route in it.
@@ -57,28 +58,36 @@ export class GoalsController {
     return this.goals.list(userId, query.archived === 'true');
   }
 
-  @ApiOperation({ summary: 'Create a goal' })
+  @ApiOperation({ summary: 'Create a goal, with why it matters' })
   @ApiCreatedResponse({ type: Goal })
-  @ApiBadRequestResponse({ description: BAD_TITLE })
+  @ApiBadRequestResponse({ description: BAD_ANSWER })
   @Post()
   create(
     @CurrentUser() userId: string,
-    @Body() dto: GoalTitleDto,
+    @Body() dto: CreateGoalDto,
   ): Promise<Goal> {
     return this.goals.create(userId, dto);
   }
 
-  @ApiOperation({ summary: 'Rename a goal' })
+  // PATCH, not PUT: only the fields that are sent change. A goal is edited
+  // one field at a time (renamed in a list, its why rewritten on its page),
+  // unlike an onboarding screen, which is always saved whole.
+  @ApiOperation({
+    summary:
+      'Change a goal: only the fields you send; null clears an optional one',
+  })
   @ApiOkResponse({ type: Goal })
-  @ApiBadRequestResponse({ description: `${BAD_TITLE} Or: ${BAD_ID}` })
+  @ApiBadRequestResponse({
+    description: `An empty or too long answer, null for a required one, or an unknown field. Or: ${BAD_ID}`,
+  })
   @ApiNotFoundResponse({ description: NOT_FOUND })
   @Patch(':id')
-  rename(
+  update(
     @CurrentUser() userId: string,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: GoalTitleDto,
+    @Body() dto: UpdateGoalDto,
   ): Promise<Goal> {
-    return this.goals.rename(userId, id, dto);
+    return this.goals.update(userId, id, dto);
   }
 
   // POST, not PATCH with a flag: archiving is something that happens to a

@@ -1,4 +1,4 @@
-import { Answer } from '../../answer.decorator.js';
+import { Answer } from '../../../common/answer.decorator.js';
 
 /**
  * Screen 3, what you have done: evidence of what the person can do, so
