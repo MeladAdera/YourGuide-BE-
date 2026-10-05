@@ -7,12 +7,13 @@ import { requireActive } from '../goals/require-active.js';
 import { SESSION_STEP_FK } from '../sessions/session-constraints.js';
 import { TasksRepository } from '../tasks/tasks.repository.js';
 import { CreateStepDto } from './dto/create-step.dto.js';
+import { ReorderStepsDto } from './dto/reorder-steps.dto.js';
 import { Step } from './dto/step.dto.js';
 import { UpdateStepDto } from './dto/update-step.dto.js';
 import { StepsRepository } from './steps.repository.js';
 
 /**
- * The same shape as TasksService. Reading is always allowed. The three
+ * The same shape as TasksService. Reading is always allowed. The four
  * methods that write run in one transaction that locks the goal, asks the
  * two questions in `requireActive` (yours? active?), then writes: an
  * archived goal is read-only all the way down.
@@ -70,6 +71,45 @@ export class StepsService {
   }
 
   /**
+   * Replaces the whole order of a task's steps. The list must be exactly
+   * the task's steps, each once: a step left out would keep its old
+   * position and could collide with a new one, and a step from another
+   * task has no place in this order.
+   *
+   * The task is locked first, the same lock an add takes. So the steps the
+   * list is compared with are still the task's steps when the order is
+   * written: no step can be added in between. (A delete in between is
+   * harmless: it only leaves a gap.)
+   *
+   * A wrong list is 400 for every reason alike. An id from someone else's
+   * task is answered like an id that does not exist.
+   */
+  reorder(
+    userId: string,
+    taskId: string,
+    input: ReorderStepsDto,
+  ): Promise<Step[]> {
+    return this.db.withTransaction(async (client) => {
+      const goal = await this.goals.findLockedOfTask(client, userId, taskId);
+      requireActive(goal, 'task.not_found');
+      if (!(await this.tasks.lock(client, userId, taskId))) {
+        throw new ApiError('task.not_found');
+      }
+      const current = await this.steps.list(client, userId, taskId);
+      if (
+        !sameIds(
+          current.map((step) => step.id),
+          input.stepIds,
+        )
+      ) {
+        throw new ApiError('step.order_mismatch');
+      }
+      await this.steps.reorder(client, userId, taskId, input.stepIds);
+      return this.steps.list(client, userId, taskId);
+    });
+  }
+
+  /**
    * A step with no work history is deleted. A step with a focus session is
    * not: the database refuses, and the answer is 409. There is no "does it
    * have sessions?" check before the delete: a check has a gap, the
@@ -101,4 +141,19 @@ function found<T>(result: T | undefined | false): T {
     throw new ApiError('step.not_found');
   }
   return result;
+}
+
+/**
+ * True when the two lists hold the same ids, in any order. Sorted and
+ * compared, so a repeated id cannot stand in for a missing one. Lower
+ * case, because a UUID may be written in capitals and PostgreSQL returns
+ * it in small letters.
+ */
+function sameIds(a: string[], b: string[]): boolean {
+  const sorted = (ids: string[]): string =>
+    ids
+      .map((id) => id.toLowerCase())
+      .sort()
+      .join();
+  return sorted(a) === sorted(b);
 }

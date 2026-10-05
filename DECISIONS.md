@@ -55,7 +55,7 @@ The Linear issues were written for a later draft (v1.3) that is not in the repo.
 | A way to archive a goal | no archive column | YOU-18. **Added in `0004_goal-archive-and-work-history.sql`** (`goals.archived_at`). |
 | Deleting a goal/task/step with sessions is refused (409) | `ON DELETE CASCADE` deletes the sessions too | YOU-18, YOU-19, YOU-20. **Changed in `0004`** for all three: `sessions.step_id` has no ON DELETE action. |
 | Task status derived from its steps | a stored `tasks.status` column | YOU-19, YOU-20. **Dropped in `0008_drop-task-status.sql`**; the status is read from the steps. |
-| Deferrable unique step position | a plain `UNIQUE (task_id, position)` | YOU-21 (reorder) |
+| Deferrable unique step position | a plain `UNIQUE (task_id, position)` | YOU-21 (reorder). **Changed in `0009_step-position-deferrable.sql`** to `DEFERRABLE INITIALLY IMMEDIATE`. |
 | Composite foreign keys for ownership | single-column foreign keys | No issue depends on it. Services check that the parent belongs to the user before inserting (YOU-19). |
 | Review fields only on an ended session | no such check | YOU-23 |
 
@@ -238,4 +238,22 @@ Three choices made with YOU-20.
 *Why keep the first time?* The progress page (week 5) counts steps finished per day from `done_at`. If marking a done step again moved the time, a double click late at night could move yesterday's work to today.
 
 **The archived rule covers steps too.** Adding, renaming, marking and deleting a step answer 409 `goal.archived` while the goal is archived (see the entry above). `requireActive` moved to `src/goals/require-active.ts` so tasks and steps ask in one place.
+
+## 2026-10-05 — Reordering steps: one list, one statement, a constraint checked when the statement ends
+
+`PUT /api/tasks/:taskId/steps/order` takes `stepIds`, every step of the task once, in the wanted order, and answers with the steps in that order (YOU-21).
+
+**Why the whole list, and not "move this step up"?** The client already knows the order it wants: the user dragged a step and let go. One list says it in one call. "Move up" three times is three calls, and if the second fails the order is one nobody chose.
+
+**Why must the list be exactly the task's steps?** A step left out would keep its old position and could collide with a new one. A step from another task has no place in this order. So: every step, each once, nothing else, or `400` with `step.order_mismatch`. The reason is the same code for all cases, and an id from someone else's task is answered exactly like an id that does not exist.
+
+**Why `DEFERRABLE INITIALLY IMMEDIATE`, when the issue says "deferred"?** All three variants were tried against PostgreSQL 16 before writing migration `0009`. A plain unique constraint is checked row by row and refuses a reorder halfway. A deferrable one is checked when the statement ends, which is enough, because the reorder is a single `UPDATE`. `INITIALLY DEFERRED` moves the check to the end of the *transaction*: in the trial a duplicate `INSERT` was accepted and the error came at `COMMIT`, far from the statement that made it. With "immediate", adding a step that collides still fails at its own `INSERT`.
+
+**Why one `UPDATE`?** Either every step gets its new position or none does, without the code having to undo anything. Positions become 1 to n, so a gap left by a delete closes.
+
+**The task is locked while it happens**, with the same lock an add takes. The steps the list was compared with are then still the task's steps when the order is written.
+
+**The path says `:taskId`**, like the other step routes; the issue wrote `:id`. A task with no steps accepts an empty list.
+
+**The one Swagger example that cannot be sent as it is.** The body must name the caller's own steps, so its pre-filled ids are refused with `400`. The examples test (2026-10-04) puts in the id its own `steps` example created, as a person would paste it by hand.
 

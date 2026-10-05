@@ -101,6 +101,26 @@ function lastSegment(path: string): string {
   return path.split('/').pop() ?? '';
 }
 
+/**
+ * One kind of example cannot be right as it stands: a list of ids, such as
+ * `stepIds`, must name the caller's own items. Here it becomes the id the
+ * `steps` example created, which is what a person does by hand in Swagger:
+ * copy the id from the answer above and paste it in.
+ */
+function withCreatedIds(body: unknown, created: Map<string, string>): unknown {
+  if (typeof body !== 'object' || body === null) {
+    return body;
+  }
+  return Object.fromEntries(
+    Object.entries(body).map(([name, value]) => {
+      const collection = /^(\w+)Ids$/.exec(name)?.[1];
+      const id =
+        collection === undefined ? undefined : created.get(`${collection}s`);
+      return [name, id === undefined ? value : [id]];
+    }),
+  );
+}
+
 /** Every route in the document that takes a JSON body, with its example. */
 function callsWithBodies(document: OpenApiDocument): Call[] {
   const calls: Call[] = [];
@@ -162,7 +182,9 @@ describe('API docs examples', () => {
       if (cookie !== '') {
         req = req.set('Cookie', cookie);
       }
-      const response = await req.send(call.body as object);
+      const response = await req.send(
+        withCreatedIds(call.body, created) as object,
+      );
 
       if (call.path === '/api/auth/register') {
         cookie = cookieHeader(sessionToken(response));
@@ -189,6 +211,7 @@ describe('API docs examples', () => {
         '/api/goals/{goalId}/tasks',
         '/api/tasks/{id}',
         '/api/tasks/{taskId}/steps',
+        '/api/tasks/{taskId}/steps/order',
         '/api/steps/{id}',
       ]),
     );

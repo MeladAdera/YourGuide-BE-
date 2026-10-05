@@ -5,7 +5,7 @@ Week 3 ended with tasks: a goal cut into pieces of work. This week cuts a task i
 | # | Step | Linear | Status |
 |---|---|---|---|
 | 1 | [Steps](#step-1--steps) | YOU-20 | Done |
-| 2 | Reorder steps | YOU-21 | Not started |
+| 2 | [Reorder steps](#step-2--reorder-steps) | YOU-21 | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -219,3 +219,191 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 9. **DELETE /steps/{id}** on the middle step → `204`. **POST /tasks/{taskId}/steps** with `{ "title": "Build a query" }`. **GET /tasks/{taskId}/steps** → the new step is last. In pgAdmin (<http://localhost:5050>), the `position` column of those steps reads 1, 3, 4: the gap the API does not show.
 10. **POST /goals/{id}/archive**. Now **POST /tasks/{taskId}/steps**, **PATCH /steps/{id}** and **DELETE /steps/{id}** all answer `409` with `"code": "goal.archived"`, and **GET /tasks/{taskId}/steps** still answers `200`. Then **POST /goals/{id}/unarchive**.
 11. **DELETE /steps/{id}** twice on one step → `204`, then `404` with `"code": "step.not_found"`.
+
+---
+
+## Step 2 — Reorder steps
+
+### Why
+
+The order of the steps is the plan. "What do I do next?" has one answer: the first step that is not done. That answer is only as good as the order.
+
+And nobody gets the order right the first time. You add "Build a query" last, then see it needs "Practice JOIN" before it and not after. Or the AI helper (week 6) suggests five steps and two are the wrong way round. Without this step the only way to move one is to delete it and add it again, and a step that has a focus session cannot be deleted at all.
+
+It is built now because:
+
+- **The steps screen (week 9) needs one call.** Drag a step, let go, and the frontend sends the new order once.
+- **It settles what step 1 left open.** Deleting a step leaves a gap in the positions. A reorder writes them 1 to n again.
+- **It needs a change in the database**, and that is easier before any real data depends on the old behaviour.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0009_step-position-deferrable.sql` | Database | `UNIQUE (task_id, position)` becomes `DEFERRABLE INITIALLY IMMEDIATE` |
+| `src/steps/dto/reorder-steps.dto.ts` | Boundary | `stepIds`: a list of UUIDs, each at most once |
+| `src/steps/steps.repository.ts` | Repository | `reorder`: one `UPDATE` |
+| `src/steps/steps.service.ts` | Service | `reorder`: lock, "yours? active?", compare the list, write |
+| `src/steps/steps.controller.ts` | Controller | `PUT /api/tasks/:taskId/steps/order` |
+| `src/common/api-error.ts` | Rule | `step.order_mismatch` |
+| `test/steps.e2e-spec.ts` | Test | 21 new tests, 62 in the file |
+| `test/schema.e2e-spec.ts` | Test | One statement can swap two positions; a real duplicate is still refused |
+| `test/api-docs.e2e-spec.ts`, `test/api-docs-examples.e2e-spec.ts` | Test | Know the new path; the examples test fills `stepIds` with a real id |
+
+### How it works
+
+**The route**
+
+```
+PUT /api/tasks/:taskId/steps/order
+{ "stepIds": ["<id of C>", "<id of A>", "<id of B>"] }
+
+200 OK
+[ { C }, { A }, { B } ]
+```
+
+The list is every step of the task, each once, first to last. The answer is the steps in their new order.
+
+| Problem | Status | Code |
+|---|---|---|
+| No cookie, or the session is gone | `401` | `auth.not_logged_in` |
+| No list, something that is not a list, an id that is not a UUID, **the same id twice**, an unknown field | `400` | `validation.failed` |
+| **A step is missing**, or an id is not a step of this task (**another task's step**, another user's, or no step at all) | `400` | `step.order_mismatch` |
+| A `taskId` in the path that is not a UUID | `400` | `bad_request` |
+| No task with that id, or it belongs to someone else | `404` | `task.not_found` |
+| The goal is archived | `409` | `goal.archived` |
+
+*Why the whole list, and not "move this step up"?* The client already knows the order it wants: the user dragged a step and let go. One list says it in one call. "Move up" three times is three calls, and if the second one fails, the steps are in an order nobody chose.
+
+*Why `PUT`?* The body is the whole order, and sending it twice leaves the same order. That is what `PUT` means: "make it this".
+
+**1. The database: a constraint that waits for the statement to finish** (`migrations/0009_step-position-deferrable.sql`)
+
+Positions are unique inside a task. Until now PostgreSQL checked that after every single row:
+
+```text
+before      A=1  B=2  C=3
+wanted      C=1  A=2  B=3
+
+row A:  1 → 2     but B is still 2   →  error, the whole UPDATE is undone
+```
+
+The result would have been fine. Only the moment in between was not.
+
+`DEFERRABLE` tells PostgreSQL to look when the statement has finished, when every row has its new position. `INITIALLY IMMEDIATE` means "finished" is the end of each statement, not the end of the transaction.
+
+*Why not `INITIALLY DEFERRED`, as the issue says?* That would move the check to `COMMIT`. A real duplicate, from a bug in adding a step for example, would then be reported at the end of the transaction, far from the statement that made it. With "immediate" it still fails at its own `INSERT`. And nothing needs more: the reorder is one statement.
+
+Before writing the migration we tried all three against PostgreSQL 16, with temporary tables in a transaction that was rolled back:
+
+| Constraint | Reorder three rows in one `UPDATE` | A real duplicate |
+|---|---|---|
+| plain `UNIQUE` | refused: `duplicate key value` | refused |
+| `DEFERRABLE INITIALLY IMMEDIATE` | accepted | refused, by the statement that made it |
+| `DEFERRABLE INITIALLY DEFERRED` | accepted | the `INSERT` is accepted; the error comes at `COMMIT` |
+
+The schema test `lets one statement swap the positions of two steps` keeps both halves true.
+
+**2. One statement writes the order** (`StepsRepository.reorder`)
+
+```sql
+UPDATE steps SET position = ordered.place
+  FROM unnest($3::uuid[]) WITH ORDINALITY AS ordered(id, place)
+ WHERE steps.id = ordered.id
+   AND steps.task_id = $2 AND steps.user_id = $1
+```
+
+`unnest($3::uuid[]) WITH ORDINALITY` turns the list of ids into a small table:
+
+```text
+id          place
+<id of C>   1
+<id of A>   2
+<id of B>   3
+```
+
+and each step takes the place of its id. Because it is one statement, either every step moves or none does, and no code has to undo anything. Positions come out 1 to n, so a gap left by a delete is closed.
+
+**3. The rules, in one transaction** (`StepsService.reorder`)
+
+```ts
+const goal = await this.goals.findLockedOfTask(client, userId, taskId);
+requireActive(goal, 'task.not_found');              // yours? 404.  active? 409.
+if (!(await this.tasks.lock(client, userId, taskId))) { … 404 }
+const current = await this.steps.list(client, userId, taskId);
+if (!sameIds(current.map((s) => s.id), input.stepIds)) {
+  throw new ApiError('step.order_mismatch');        // 400
+}
+await this.steps.reorder(client, userId, taskId, input.stepIds);
+return this.steps.list(client, userId, taskId);
+```
+
+*Why must the list be exactly the task's steps?* A step left out would keep its old position and could collide with a new one. A step from another task has no place in this order. So: every step, each once, nothing else.
+
+*Why lock the task?* It is the lock that adding a step takes (step 1). While the reorder holds it, no step can be added. So the steps the list was compared with are still the task's steps when the order is written.
+
+*Why the same `400` for every wrong list?* The client does the same thing in each case: fetch the steps again and let the user retry. And an id from someone else's task must be answered exactly like an id that does not exist, or the answer would say that it exists. A test compares the two answers.
+
+*Where is a repeated id caught?* In the DTO (`@ArrayUnique`), before the database is asked anything. `sameIds` would catch it too: it sorts both lists and compares them, so a repeated id cannot stand in for a missing one.
+
+**4. The Swagger example, the one that cannot be right**
+
+Every other request example on the docs page can be sent exactly as pre-filled. This one cannot: the body must name *your* steps, and the page cannot know their ids. The example shows the shape with two made-up ids, and the description says where to get real ones. Sent as it is, it answers `400` with `step.order_mismatch`, which is the correct answer.
+
+The test that sends every example (`test/api-docs-examples.e2e-spec.ts`) does what a person does: it replaces the ids in `stepIds` with the id of the step its own example created a moment before.
+
+**5. The tests**
+
+| Rule (from the issue's *Done when*) | Test |
+|---|---|
+| Reorder three steps, and the list returns the new order | `puts three steps in a new order and answers with it` |
+| The same id twice is `400` | `refuses the same id twice: 400, order unchanged` |
+| A missing id is `400` | `refuses a list with a step missing: 400, order unchanged` |
+| Another task's step is `400` | `refuses another task's step: 400, both orders unchanged` |
+
+And the rest:
+
+| Rule | Test |
+|---|---|
+| Only the order changes | `keeps what each step holds: its title and whether it is done` |
+| Positions become 1 to n | `writes positions 1 to n, closing the gap a delete left` |
+| A later add still goes last | `puts a step added afterwards last` |
+| Safe to repeat | `accepts the order the steps already have` |
+| An id in capitals is the same id | `accepts ids written in capitals` |
+| A task with no steps takes an empty list | `accepts an empty list for a task with no steps` |
+| One task's order does not touch another's | `leaves the order of another task alone` |
+| An unknown id, added or in place of one; an empty list | three more cases of `refuses a list with …` |
+| Someone else's step looks like no step | `refuses another user's step exactly like an id that does not exist` |
+| A body of the wrong shape | five cases of `refuses a body with …` |
+| An archived goal refuses it | `an archived goal is read-only › refuses to reorder: 409` |
+| `404`, `400` and `401` | the "every endpoint" tests from step 1 now call this route too |
+| The constraint itself | `lets one statement swap the positions of two steps` (schema) |
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0009_step-position-deferrable` is applied, and all 316 tests pass.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running). In Apidog, import `http://localhost:3001/api/docs-json` again first.
+
+1. **GET /tasks/{taskId}/steps** for a task with at least three steps (add some with **POST** if needed). Copy the ids, in order.
+2. **PUT /tasks/{taskId}/steps/order** → replace the two example ids with your ids, the last one first → *Execute* → `200`, and the steps come back in the order you sent.
+3. **GET /tasks/{taskId}/steps** → the same order. It was saved.
+4. *Execute* the same **PUT** again → `200`, the same order. It is safe to repeat.
+5. Leave one id out → `400` with `"code": "step.order_mismatch"`.
+6. Put one id in twice → `400` with `"code": "validation.failed"` and `{ "field": "stepIds", "code": "arrayUnique" }`.
+7. Send the example exactly as pre-filled → `400` with `step.order_mismatch`. Those ids are nobody's steps.
+8. **GET /tasks/{taskId}/steps** → still the order from step 2. None of the refused calls changed anything.
+9. In pgAdmin (<http://localhost:5050>):
+
+   ```sql
+   SELECT title, position FROM steps WHERE task_id = '<task id>' ORDER BY position;
+   ```
+
+   The positions are 1, 2, 3 with no gap, also if step 1's check had left them at 1, 3, 4.
+10. **POST /goals/{id}/archive**, then the **PUT** again → `409` with `"code": "goal.archived"`. Then **POST /goals/{id}/unarchive**.
+

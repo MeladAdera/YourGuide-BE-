@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -24,6 +25,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { CreateStepDto } from './dto/create-step.dto.js';
+import { ReorderStepsDto } from './dto/reorder-steps.dto.js';
 import { Step } from './dto/step.dto.js';
 import { UpdateStepDto } from './dto/update-step.dto.js';
 import { StepsService } from './steps.service.js';
@@ -39,7 +41,7 @@ const ARCHIVED =
 // The same two shapes of path as tasks: a step is created and listed under
 // its task (/tasks/:taskId/steps), and changed by its own id (/steps/:id).
 //
-// An archived goal is read-only: the list works, the three writes are 409.
+// An archived goal is read-only: the list works, the four writes are 409.
 //
 // No @Public() anywhere here: every route needs a login. The decorators on
 // the class apply to every route in it.
@@ -82,6 +84,25 @@ export class StepsController {
     @Body() dto: CreateStepDto,
   ): Promise<Step> {
     return this.steps.create(userId, taskId, dto);
+  }
+
+  // PUT, not PATCH: the body is the whole order, and sending it twice
+  // leaves the same order. 200 with the steps as they now stand, so the
+  // client need not ask again.
+  @ApiOperation({ summary: 'Put the steps of a task in a new order' })
+  @ApiOkResponse({ type: [Step], description: 'The steps, in the new order.' })
+  @ApiBadRequestResponse({
+    description: `The list is not exactly the steps of this task, each once. Or an id in it is not a UUID, or repeated. Or: ${BAD_ID}`,
+  })
+  @ApiNotFoundResponse({ description: NO_TASK })
+  @ApiConflictResponse({ description: ARCHIVED })
+  @Put('tasks/:taskId/steps/order')
+  reorder(
+    @CurrentUser() userId: string,
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Body() dto: ReorderStepsDto,
+  ): Promise<Step[]> {
+    return this.steps.reorder(userId, taskId, dto);
   }
 
   // PATCH with a `done` field, not /done and /undone routes like a goal's

@@ -60,6 +60,7 @@ describe('API docs', () => {
       '/api/steps/{id}',
       '/api/tasks/{id}',
       '/api/tasks/{taskId}/steps',
+      '/api/tasks/{taskId}/steps/order',
     ]);
   });
 

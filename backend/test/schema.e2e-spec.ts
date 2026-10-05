@@ -215,6 +215,36 @@ describe('Database schema', () => {
     ).rejects.toMatchObject({ code: UNIQUE_VIOLATION });
   });
 
+  it('lets one statement swap the positions of two steps', async () => {
+    const { userId, taskId, stepId } = await insertStep();
+    const secondId = await insertReturningId(
+      'INSERT INTO steps (user_id, task_id, title, position) VALUES ($1, $2, $3, 2)',
+      [userId, taskId, 'Second'],
+    );
+
+    // Row by row this collides: the first step moves to 2 while the second
+    // still stands there. The constraint is checked when the statement ends.
+    await pool.query(
+      `UPDATE steps SET position = CASE WHEN id = $1 THEN 2 ELSE 1 END
+        WHERE task_id = $2`,
+      [stepId, taskId],
+    );
+
+    const { rows } = await pool.query<{ id: string }>(
+      'SELECT id FROM steps WHERE task_id = $1 ORDER BY position',
+      [taskId],
+    );
+    expect(rows.map((row) => row.id)).toEqual([secondId, stepId]);
+    // "When the statement ends", not "when the transaction ends": a real
+    // duplicate is refused by the statement that makes it.
+    await expect(
+      pool.query('UPDATE steps SET position = 1 WHERE task_id = $1', [taskId]),
+    ).rejects.toMatchObject({
+      code: UNIQUE_VIOLATION,
+      constraint: 'steps_task_id_position_key',
+    });
+  });
+
   it('rejects a second active session for the same user', async () => {
     const { userId, stepId } = await insertStep();
     await insertSession(userId, stepId);

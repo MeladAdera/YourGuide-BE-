@@ -98,6 +98,34 @@ export class StepsRepository {
   }
 
   /**
+   * Writes a new order in one statement. `unnest … WITH ORDINALITY` turns
+   * the list of ids into rows of (id, place), the place counted from 1, and
+   * each step takes the place of its id. Positions become 1 to n, so a gap
+   * left by a delete is closed.
+   *
+   * Halfway through, two steps hold the same position. That is allowed
+   * because UNIQUE (task_id, position) is checked when the statement ends
+   * (migration 0009), and by then every step has a place of its own.
+   *
+   * The caller has checked that the list is exactly the task's steps. An
+   * id that is not would simply match no row here.
+   */
+  async reorder(
+    executor: Executor,
+    userId: string,
+    taskId: string,
+    stepIds: string[],
+  ): Promise<void> {
+    await executor.query(
+      `UPDATE steps SET position = ordered.place
+         FROM unnest($3::uuid[]) WITH ORDINALITY AS ordered(id, place)
+        WHERE steps.id = ordered.id
+          AND steps.task_id = $2 AND steps.user_id = $1`,
+      [userId, taskId, stepIds],
+    );
+  }
+
+  /**
    * True when a row was deleted. PostgreSQL throws a foreign-key violation
    * instead when the step has a session (see SESSION_STEP_FK).
    */

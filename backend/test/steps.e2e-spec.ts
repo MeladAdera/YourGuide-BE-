@@ -31,7 +31,7 @@ interface StepBody {
   createdAt: string;
 }
 
-type Method = 'get' | 'post' | 'patch' | 'delete';
+type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
 describe('steps', () => {
   let app: INestApplication<App>;
@@ -94,6 +94,18 @@ describe('steps', () => {
 
   async function setDone(stepId: string, done: boolean): Promise<Response> {
     return call('patch', `/steps/${stepId}`, { body: { done } });
+  }
+
+  /** PUT the order. `stepIds` is unknown so that bad lists can be sent. */
+  function reorder(
+    stepIds: unknown,
+    task = taskId,
+    as: string | null = cookie,
+  ): Promise<Response> {
+    return call('put', `/tasks/${task}/steps/order`, {
+      body: { stepIds },
+      as,
+    });
   }
 
   /** The status the API gives the task, read from its steps. */
@@ -320,6 +332,177 @@ describe('steps', () => {
     });
   });
 
+  describe('reorder', () => {
+    let a: StepBody;
+    let b: StepBody;
+    let c: StepBody;
+
+    beforeEach(async () => {
+      a = await createStep('A');
+      b = await createStep('B');
+      c = await createStep('C');
+    });
+
+    it('puts three steps in a new order and answers with it', async () => {
+      const response = await reorder([c.id, a.id, b.id]);
+
+      expect(response.status).toBe(200);
+      // The same three steps, untouched but for their order.
+      expect(response.body).toEqual([c, a, b]);
+      expect(await stepsOf()).toEqual([c, a, b]);
+    });
+
+    it('keeps what each step holds: its title and whether it is done', async () => {
+      const done = (await setDone(b.id, true)).body as StepBody;
+
+      const response = await reorder([done.id, c.id, a.id]);
+
+      expect(response.body).toEqual([done, c, a]);
+      expect(await taskStatus()).toBe('in_progress');
+    });
+
+    it('writes positions 1 to n, closing the gap a delete left', async () => {
+      await call('delete', `/steps/${b.id}`);
+      const d = await createStep('D');
+      expect(await positions()).toEqual([1, 3, 4]);
+
+      await reorder([d.id, a.id, c.id]);
+
+      expect(await titles()).toEqual(['D', 'A', 'C']);
+      expect(await positions()).toEqual([1, 2, 3]);
+    });
+
+    it('puts a step added afterwards last', async () => {
+      await reorder([c.id, b.id, a.id]);
+
+      await createStep('D');
+
+      expect(await titles()).toEqual(['C', 'B', 'A', 'D']);
+    });
+
+    it('accepts the order the steps already have', async () => {
+      const response = await reorder([a.id, b.id, c.id]);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([a, b, c]);
+    });
+
+    it('accepts ids written in capitals', async () => {
+      const response = await reorder([c.id.toUpperCase(), a.id, b.id]);
+
+      expect(response.status).toBe(200);
+      expect(await titles()).toEqual(['C', 'A', 'B']);
+    });
+
+    it('accepts an empty list for a task with no steps', async () => {
+      const emptyTask = await createTask('Nothing yet');
+
+      const response = await reorder([], emptyTask);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([]);
+    });
+
+    it('leaves the order of another task alone', async () => {
+      const otherTask = await createTask('Learn testing');
+      await createStep('X', otherTask);
+      await createStep('Y', otherTask);
+
+      await reorder([c.id, b.id, a.id]);
+
+      expect(await titles(otherTask)).toEqual(['X', 'Y']);
+    });
+
+    // The list must be exactly the task's steps. Each of these is 400 with
+    // the same code, and the order stays as it was.
+    it.each<[string, () => string[]]>([
+      ['a step missing', () => [a.id, b.id]],
+      ['an id that is no step, added', () => [a.id, b.id, c.id, randomUUID()]],
+      [
+        'an id that is no step, in place of one',
+        () => [a.id, randomUUID(), c.id],
+      ],
+      ['an empty list', () => []],
+    ])('refuses a list with %s: 400, order unchanged', async (_name, ids) => {
+      const response = await reorder(ids());
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        code: 'step.order_mismatch',
+        message: 'The list must hold every step of this task, each once.',
+      });
+      expect(await stepsOf()).toEqual([a, b, c]);
+    });
+
+    it('refuses the same id twice: 400, order unchanged', async () => {
+      const response = await reorder([a.id, a.id, b.id, c.id]);
+
+      expect(response.status).toBe(400);
+      // Caught by the DTO, before the database is asked.
+      expect(response.body).toMatchObject({
+        code: 'validation.failed',
+        errors: [{ field: 'stepIds', code: 'arrayUnique' }],
+      });
+      expect(await stepsOf()).toEqual([a, b, c]);
+    });
+
+    it("refuses another task's step: 400, both orders unchanged", async () => {
+      const otherTask = await createTask('Learn testing');
+      const x = await createStep('X', otherTask);
+
+      const inPlace = await reorder([a.id, b.id, x.id]);
+      const added = await reorder([a.id, b.id, c.id, x.id]);
+
+      expect(inPlace.status).toBe(400);
+      expect(inPlace.body).toMatchObject({ code: 'step.order_mismatch' });
+      expect(added.status).toBe(400);
+      expect(await stepsOf()).toEqual([a, b, c]);
+      expect(await stepsOf(otherTask)).toEqual([x]);
+    });
+
+    it("refuses another user's step exactly like an id that does not exist", async () => {
+      const other = await register('other@example.com');
+      const theirs = await pool.query<{ id: string }>(
+        `WITH goal AS (
+           INSERT INTO goals (user_id, title, why_it_matters)
+           VALUES ($1, 'Theirs', 'Why') RETURNING id
+         ), task AS (
+           INSERT INTO tasks (user_id, goal_id, title)
+           SELECT $1, id, 'Theirs' FROM goal RETURNING id
+         )
+         INSERT INTO steps (user_id, task_id, title, position)
+         SELECT $1, id, 'Theirs', 1 FROM task RETURNING id`,
+        [other.userId],
+      );
+
+      const withTheirs = await reorder([a.id, b.id, theirs.rows[0]?.id]);
+      const withUnknown = await reorder([a.id, b.id, randomUUID()]);
+
+      expect(withTheirs.status).toBe(400);
+      expect(withTheirs.body).toEqual(withUnknown.body);
+      expect(await stepsOf()).toEqual([a, b, c]);
+    });
+
+    it.each<[string, () => object]>([
+      ['no list', () => ({})],
+      ['a list that is not a list', () => ({ stepIds: a.id })],
+      ['an id that is not a UUID', () => ({ stepIds: [a.id, 'nope', c.id] })],
+      ['null for the list', () => ({ stepIds: null })],
+      [
+        'an unknown field',
+        () => ({ stepIds: [c.id, b.id, a.id], position: 1 }),
+      ],
+    ])('refuses a body with %s: 400, order unchanged', async (_name, body) => {
+      const response = await call('put', `/tasks/${taskId}/steps/order`, {
+        body: body(),
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ code: 'validation.failed' });
+      expect(await stepsOf()).toEqual([a, b, c]);
+    });
+  });
+
   describe('an archived goal is read-only', () => {
     let step: StepBody;
 
@@ -360,6 +543,13 @@ describe('steps', () => {
       expect(await count('steps')).toBe(1);
     });
 
+    it('refuses to reorder: 409', async () => {
+      const refused = await reorder([step.id]);
+
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({ code: 'goal.archived' });
+    });
+
     it('still lists its steps', async () => {
       const listed = await call('get', `/tasks/${taskId}/steps`);
 
@@ -374,6 +564,7 @@ describe('steps', () => {
         (await call('post', `/tasks/${taskId}/steps`, { body: STEP })).status,
       ).toBe(201);
       expect((await setDone(step.id, true)).status).toBe(200);
+      expect((await reorder([step.id])).status).toBe(400);
       expect((await call('delete', `/steps/${step.id}`)).status).toBe(204);
     });
 
@@ -396,6 +587,7 @@ describe('steps', () => {
       expect((await call('get', `/tasks/${taskId}/steps`, { as })).status).toBe(
         404,
       );
+      expect((await reorder([step.id], taskId, as)).status).toBe(404);
       expect(await stepsOf()).toEqual([step]);
     });
   });
@@ -453,6 +645,9 @@ describe('steps', () => {
     expect((await call('delete', `/steps/${step.id}`, { as })).status).toBe(
       404,
     );
+    const reordered = await reorder([step.id], taskId, as);
+    expect(reordered.status).toBe(404);
+    expect(reordered.body).toMatchObject({ code: 'task.not_found' });
 
     // Nothing the other user tried changed anything.
     expect(await stepsOf()).toEqual([step]);
@@ -480,6 +675,7 @@ describe('steps', () => {
       message: 'Step not found.',
     });
     expect((await call('delete', `/steps/${missing}`)).status).toBe(404);
+    expect((await reorder([], missing)).status).toBe(404);
   });
 
   it('answers 400 for an id that is not a UUID', async () => {
@@ -495,6 +691,7 @@ describe('steps', () => {
         .status,
     ).toBe(400);
     expect((await call('delete', '/steps/not-a-uuid')).status).toBe(400);
+    expect((await reorder([], 'not-a-uuid')).status).toBe(400);
   });
 
   it('needs a login on every endpoint', async () => {
@@ -514,6 +711,7 @@ describe('steps', () => {
     expect((await call('delete', `/steps/${step.id}`, { as })).status).toBe(
       401,
     );
+    expect((await reorder([step.id], taskId, as)).status).toBe(401);
     expect(await stepsOf()).toEqual([step]);
   });
 

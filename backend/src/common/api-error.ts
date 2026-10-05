@@ -62,6 +62,10 @@ export const API_ERRORS = {
     status: HttpStatus.CONFLICT,
     message: 'This step has work history. It cannot be deleted.',
   },
+  'step.order_mismatch': {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'The list must hold every step of this task, each once.',
+  },
 
   // A body or a query refused by a DTO. The answer carries the sentences
   // of the broken rules as `message`, and the rules themselves, by field,

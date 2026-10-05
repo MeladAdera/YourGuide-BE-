@@ -14,6 +14,8 @@
 >
 > **Changed 2026-10-05:** `tasks.status` is gone. A task's status is read from its steps (section 7), in migration `0008_drop-task-status.sql`.
 >
+> **Changed 2026-10-05 (2):** the unique constraint on a step's position is deferrable, so the steps of a task can be reordered in one statement (section 8), in migration `0009_step-position-deferrable.sql`.
+>
 > **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
@@ -774,7 +776,8 @@ CREATE TABLE steps (
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-  UNIQUE (task_id, position)
+  -- Checked when a statement ends, not row by row: see "Why deferrable?".
+  UNIQUE (task_id, position) DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE INDEX steps_user_idx
@@ -809,6 +812,34 @@ UNIQUE (task_id, position)
 prevents two steps belonging to the same task from having the same
 position.
 
+### Why deferrable?
+
+Reordering changes several positions in one `UPDATE`:
+
+```text
+before      A=1  B=2  C=3
+wanted      C=1  A=2  B=3
+```
+
+A plain unique constraint is checked row by row. The moment A becomes 2,
+B is still 2, and PostgreSQL stops the whole statement, although the
+result would have been fine.
+
+`DEFERRABLE` moves the check to when the statement has finished and
+every row has its new position. `INITIALLY IMMEDIATE` keeps it at the
+end of each *statement*, not the end of the transaction, so a real
+duplicate is still reported by the statement that made it:
+
+```sql
+UPDATE steps SET position = ordered.place
+  FROM unnest($3::uuid[]) WITH ORDINALITY AS ordered(id, place)
+ WHERE steps.id = ordered.id
+   AND steps.task_id = $2 AND steps.user_id = $1;
+```
+
+`unnest … WITH ORDINALITY` turns the list of ids into rows of (id,
+place), the place counted from 1. Each step takes the place of its id.
+
 ### What position is, and is not
 
 -   A new step gets the highest position of its task plus one, so it
@@ -818,8 +849,9 @@ position.
     positions are 1 and 3. The order is still right, which is all that
     is asked of them.
 -   The API never returns `position`. It returns the steps in order,
-    and reordering (later) is sent as a list of ids. So no client can
-    come to depend on the numbers.
+    and reordering is sent as a list of ids. So no client can come to
+    depend on the numbers.
+-   A reorder writes positions 1 to n, which closes any gap.
 
 ### Rules
 
@@ -1255,7 +1287,7 @@ domain requires it.
 | Session cannot end before it starts | CHECK constraint |
 | Rating must be 1–5 | CHECK constraint |
 | A task's status always agrees with its steps | Not stored: read from `steps.done_at` |
-| Step positions are unique within a task | UNIQUE constraint |
+| Step positions are unique within a task | UNIQUE constraint, deferrable: checked when a statement ends |
 | Deleting a goal deletes its tasks and steps | ON DELETE CASCADE |
 | A step with sessions cannot be deleted, nor the task or goal above it | Foreign key with no ON DELETE action |
 | A goal is active or archived | `archived_at` is NULL or a timestamp |
