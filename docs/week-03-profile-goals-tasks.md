@@ -14,7 +14,7 @@ Week 2 gave the app a user. This week the user gets data of their own: the onboa
 | 8 | [Every error carries a code](#step-8--every-error-carries-a-code) | YOU-54 | Done |
 | 9 | [Validation errors name the field and the rule](#step-9--validation-errors-name-the-field-and-the-rule) | YOU-55 | Done |
 | 10 | [The user's language on the account](#step-10--the-users-language-on-the-account) | YOU-56 | Done |
-| 11 | Tasks | YOU-19 | Not started |
+| 11 | [Tasks](#step-11--tasks) | YOU-19 | Done |
 
 Steps 2–5 were added on 2026-10-03, before goals, when the three-question profile from step 1 was redesigned into an eight-screen onboarding. The design and its reasons are in `DECISIONS.md` (the four entries dated 2026-10-03) and `PROJECT.md` §6.1. Their Linear issues, YOU-49 to YOU-52, were created from that design. Step 7 was added on 2026-10-04, after using the API showed that screen 8 and goals were two homes for one thing.
 
@@ -1392,3 +1392,235 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
 5. **PATCH /auth/me** with `{ "locale": "en" }` to put it back.
 6. **POST /auth/register** → the example now has `"locale": "en"`. With a new email → `201`.
 7. In pgAdmin, `users` has a `locale` column, and every row has `en` or `ar`.
+
+---
+
+## Step 11 — Tasks
+
+### Why
+
+A goal says where the person wants to go. It is too big to work on directly: nobody sits down to "become a stronger full-stack developer". A task is the first cut: one meaningful piece of work inside the goal, such as "Learn PostgreSQL". Steps, next week, cut a task into pieces small enough for one sitting.
+
+Three reasons it is built now:
+
+- **A step needs a task.** `steps.task_id` is required, and a focus session needs a step. Weeks 4 and 5 cannot start without this.
+- **It decides how a status is kept.** A task is to do, in progress or done. This step decides that the status is *read from the steps* and never stored, before the steps API exists and could have been written to maintain a stored copy.
+- **It is the first thing created under something else.** A goal is created under the user, who is known from the cookie. A task is created under a goal named in the path, so for the first time the API must ask "is that goal yours?" before it inserts. Steps and focus sessions will ask the same question the same way.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0008_drop-task-status.sql` | Database | Removes `tasks.status` |
+| `src/tasks/task-status.ts` | Constant | `TASK_STATUSES` and the `TaskStatus` type |
+| `src/tasks/dto/task.dto.ts` | Boundary | A task as the API returns it |
+| `src/tasks/dto/create-task.dto.ts`, `update-task.dto.ts` | Boundary | The title, for create and for rename |
+| `src/tasks/tasks.repository.ts` | Repository | Four statements, each filtered by `user_id`; the status query |
+| `src/tasks/tasks.service.ts` | Service | Before every write: is the goal yours, is it active; "no row" becomes `404`; the foreign-key refusal becomes `409` |
+| `src/tasks/tasks.controller.ts` | Controller | Four routes |
+| `src/tasks/tasks.module.ts` | Module | Registered in `app.module.ts` |
+| `src/goals/goals.repository.ts` | Repository | `find`, `findLocked`, `findLockedOfTask`: one goal, read for another module |
+| `src/goals/goals.module.ts` | Module | Exports `GoalsRepository` |
+| `src/common/api-error.ts` | Rule | Three new codes |
+| `src/common/answer.decorator.ts` | Boundary | `@Changed()` moved here from the goal DTO, now that two DTOs use it |
+| `test/tasks.e2e-spec.ts` | Test | 31 e2e tests |
+| `test/schema.e2e-spec.ts` | Test | `tasks` has no status column |
+| `test/api-docs.e2e-spec.ts`, `test/api-docs-examples.e2e-spec.ts` | Test | Know the two new paths; the examples test can now fill `{goalId}` |
+
+### How it works
+
+**The routes**
+
+| Request | Answer |
+|---|---|
+| `GET /api/goals/:goalId/tasks` | `200`, the goal's tasks, oldest first, each with its status |
+| `POST /api/goals/:goalId/tasks` `{ "title": "…" }` | `201`, the new task |
+| `PATCH /api/tasks/:id` `{ "title": "…" }` | `200`, the renamed task |
+| `DELETE /api/tasks/:id` | `204`, or `409` when the task has work history |
+
+The three that write answer `409` while the goal is archived. The list always works.
+
+A task looks like this:
+
+```
+{ "id": "b48b…", "goalId": "bf6f…", "title": "Learn PostgreSQL",
+  "status": "todo", "createdAt": "2026-10-05T07:47:50.766Z" }
+```
+
+| Problem | Status | Code |
+|---|---|---|
+| No cookie, or the session is gone | `401` | `auth.not_logged_in` |
+| A missing or empty title, one over 200 characters, an unknown field (a `status` is one) | `400` | `validation.failed` |
+| An id in the path that is not a UUID | `400` | `bad_request` |
+| No goal with that id, **or it belongs to someone else** (list and create) | `404` | `goal.not_found` |
+| No task with that id, **or it belongs to someone else** (rename and delete) | `404` | `task.not_found` |
+| Adding, renaming or deleting a task while its goal is archived | `409` | `goal.archived` |
+| Deleting a task that has a focus session on one of its steps | `409` | `task.has_work_history` |
+
+*Why two shapes of path?* A task is created and listed *under its goal*, so the goal is in the path: `/goals/:goalId/tasks`. Once it exists, its own id is enough: `/tasks/:id`. The client does not have to remember which goal a task is in to rename it. Steps will do the same under a task.
+
+**1. The status is read, not stored** (`migrations/0008_drop-task-status.sql`, `src/tasks/tasks.repository.ts`)
+
+Schema v1 had a `status` column on `tasks`. The migration removes it. The status is now part of the query that reads a task:
+
+```sql
+(SELECT CASE
+          WHEN count(*) FILTER (WHERE done_at IS NOT NULL) = 0 THEN 'todo'
+          WHEN count(*) FILTER (WHERE done_at IS NULL) = 0 THEN 'done'
+          ELSE 'in_progress'
+        END
+   FROM steps
+  WHERE steps.task_id = tasks.id) AS status
+```
+
+| The steps | The status |
+|---|---|
+| No step done, or no steps yet | `todo` |
+| Some done, not all | `in_progress` |
+| Every step done | `done` |
+
+*Why not keep the column?* A stored status is a second copy of what the steps already say. Something would have to update it every time a step is marked, unmarked, added or deleted, and the day that code misses one case, the app shows a finished task as unfinished. A status that is read from the steps cannot be wrong. "A task is done automatically when all its steps are done" (`PROJECT.md` §6.2) is then not a feature to build: it is simply what the query says.
+
+It is the idea `SCHEMA.md` §14 already uses for progress: what can be counted is not stored.
+
+Three details:
+
+- `count(*)` without `GROUP BY` always returns one row, also when the task has no steps. So the status is never `null`.
+- The same text is used after `SELECT` and after `RETURNING`. PostgreSQL lets `INSERT … RETURNING` and `UPDATE … RETURNING` run a subquery on the row just written, so create and rename answer with the status too, from one definition.
+- The status cannot be sent. `{ "status": "done" }` is refused with `400` like any unknown field. The only way to finish a task is to finish its steps.
+
+**2. Three new codes** (`src/common/api-error.ts`)
+
+| Code | Status | Sentence |
+|---|---|---|
+| `goal.archived` | 409 | This goal is archived. Unarchive it first. |
+| `task.not_found` | 404 | Task not found. |
+| `task.has_work_history` | 409 | This task has work history. It cannot be deleted. |
+
+This is the rule from step 8 at work: a new error is a new line in one file, and the frontend translates by the code.
+
+*Why not reuse `goal.has_work_history` for a task?* The cause is the same foreign key, but the frontend needs a sentence about a task, and "archive the goal instead" is not what someone deleting one task wants to read.
+
+**3. The repository** (`src/tasks/tasks.repository.ts`)
+
+Four statements. Each has `user_id = $1` in its `WHERE`, the pattern from goals: a task that belongs to someone else matches no row, so `update` returns `undefined` and `delete` returns `false`. There is no separate ownership check to forget.
+
+**4. An archived goal is read-only** (`src/tasks/tasks.service.ts`)
+
+Archiving a goal means "I have put this away". So nothing under it changes until it is taken out again: no new task, no rename, no delete. The list still works, because looking is not changing.
+
+That gives the three methods that write one shape: lock the goal, ask two questions, write.
+
+```ts
+create(userId, goalId, input) {
+  return this.db.withTransaction(async (client) => {
+    const goal = await this.goals.findLocked(client, userId, goalId);
+    requireActive(goal, 'goal.not_found');
+    return this.tasks.create(client, userId, goalId, input);
+  });
+}
+
+function requireActive(goal, missing) {
+  if (goal === undefined) throw new ApiError(missing);          // 404
+  if (goal.archivedAt !== null) throw new ApiError('goal.archived'); // 409
+}
+```
+
+Rename and delete do the same. They only know the task's id, so they find the goal through the task with `findLockedOfTask`:
+
+```sql
+SELECT … FROM goals
+ WHERE id = (SELECT goal_id FROM tasks WHERE id = $2 AND user_id = $1)
+   AND user_id = $1
+ FOR SHARE
+```
+
+No row means the task is not there or is someone else's: `404` with `task.not_found`.
+
+*Why does the service check, when the pattern from goals says "put it in the statement"?* Two reasons. For create there is no row yet, and `tasks.goal_id` is a foreign key to the goal alone: it proves the goal exists, not whose it is. Without this check, a user who knew another user's goal id could put a task under it. And "is the goal archived?" lives in another table than the task, so the statement that changes the task cannot answer 404 and 409 apart.
+
+*Why 404 before 409?* If the archived question came first, another user's archived goal would answer `409`, which tells them it exists. With 404 first, someone else's goal or task always looks like nothing.
+
+*Why a transaction and a lock?* A check followed by a write is two statements, with a gap between them. In the gap the goal could be archived (the change lands in an archived goal) or deleted (the insert crashes on the foreign key). `FOR SHARE` closes it: until the transaction ends, PostgreSQL makes an archive or a delete of that goal wait. The check and the write see the same goal. It is the same worry as "does it have sessions?" before a delete in step 6. There a foreign key closed the gap; here no constraint can, so a lock does.
+
+*What about the goal's own routes?* Unchanged. An archived goal can still be renamed, unarchived, or deleted when it has no work history. The rule is about what is under it.
+
+**5. Listing, renaming, deleting**
+
+- **List** reads the goal first, so "not your goal" is `404` and not an empty list, which would look like a goal with no tasks.
+- **Rename** is `PATCH` with the same meaning as on a goal: left out is unchanged, `null` is refused. `@Changed()` is the decorator the goal title already used; it moved to `src/common/` so both use one.
+- **Delete** keeps the goal's way of protecting work history: no "does it have sessions?" check, the database refuses when a step under the task has a session, and the service turns that one named constraint into `409` with `task.has_work_history`.
+- The lock is on the goal, not on the task. A second request could still delete the task between the check and the write. Then the write matches no row and the answer is `404`, which is true.
+
+**6. The tests** (`test/tasks.e2e-spec.ts`)
+
+Steps and sessions have no API yet, so the tests insert them with SQL, as the goals tests do.
+
+| Rule (from the issue's *Done when*) | Test |
+|---|---|
+| A task in an archived goal is `409` | `an archived goal is read-only › refuses a new task: 409, nothing saved` |
+| A task in another user's goal is `404` | `answers 404 on every endpoint for another user's goal or task` |
+| Delete with a session is `409` | `refuses to delete a task with a session: 409, nothing deleted` |
+| User B gets `404` on every endpoint | the same test, all four routes |
+
+And the rest:
+
+| Rule | Test |
+|---|---|
+| The status follows the steps, both ways | `goes todo → in_progress → done as steps are done, and back` |
+| Each task has its own | `gives each task its own status` |
+| Rename answers with it | `is in the answer of a rename too` |
+| An archived goal refuses rename and delete too | `refuses to rename a task…`, `refuses to delete a task…` |
+| It still lists its tasks | `still lists its tasks` |
+| Unarchived, it takes every change again | `takes every change again once it is unarchived` |
+| Someone else's archived goal is `404`, not `409` | `answers 404 to another user on every endpoint` |
+| Only that goal's tasks, in order | `lists the tasks of one goal only, in the order they were created` |
+| Delete takes the steps with it | `deletes a task without sessions, with its steps` |
+| Bad titles, a `status`, an unknown field | six cases on create, six on rename |
+| `404` unknown id, `400` malformed id, `401` no login | one test each, all four routes |
+| The Swagger examples work as they are | `accepts every request example exactly as Swagger pre-fills it` |
+
+The examples test had to learn something: `POST /api/goals/{goalId}/tasks` has a parameter that is not called `id`. It now fills any parameter with the id of the item created in the collection named just before it (`goals/{goalId}`, `tasks/{id}`).
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0008_drop-task-status` is applied, and all 253 tests pass.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running). In Apidog, import `http://localhost:3001/api/docs-json` again first, so the four new routes appear under **tasks**.
+
+1. **POST /auth/login**, then **GET /goals** → copy the `id` of an active goal. (No goal yet? **POST /goals** with the example.)
+2. **POST /goals/{goalId}/tasks** → paste the id → the example is `{ "title": "Learn PostgreSQL" }` → *Execute* → `201`, with `"status": "todo"`. Copy the task's `id`.
+3. **GET /goals/{goalId}/tasks** → `200`, a list with that task.
+4. **PATCH /tasks/{id}** → the example renames it → `200`.
+5. **PATCH /tasks/{id}** with `{ "status": "done" }` → `400`: `{ "field": "status", "code": "whitelistValidation" }`. The status cannot be sent.
+6. **POST /goals/{id}/archive**. Now the goal is read-only: **POST /goals/{goalId}/tasks**, **PATCH /tasks/{id}** and **DELETE /tasks/{id}** all answer `409` with `"code": "goal.archived"`, and **GET /goals/{goalId}/tasks** still answers `200`. Then **POST /goals/{id}/unarchive**, and the same **PATCH** answers `200`.
+7. See the status move. The steps API is the next step, so add two steps in pgAdmin (<http://localhost:5050>), with your task's id:
+
+   ```sql
+   INSERT INTO steps (user_id, task_id, title, position)
+   SELECT user_id, id, 'Understand SELECT', 1 FROM tasks WHERE id = '<task id>';
+   INSERT INTO steps (user_id, task_id, title, position)
+   SELECT user_id, id, 'Practice JOIN', 2 FROM tasks WHERE id = '<task id>';
+   ```
+
+   **GET /goals/{goalId}/tasks** → still `"todo"`: steps that are not done do not start a task.
+
+   ```sql
+   UPDATE steps SET done_at = now() WHERE task_id = '<task id>' AND position = 1;
+   ```
+
+   **GET** → `"in_progress"`.
+
+   ```sql
+   UPDATE steps SET done_at = now() WHERE task_id = '<task id>';
+   ```
+
+   **GET** → `"done"`. Nothing wrote a status anywhere.
+8. **DELETE /tasks/{id}** → `204`. Its two steps are gone with it. **DELETE** again → `404` with `"code": "task.not_found"`.
+9. In pgAdmin, `tasks` has no `status` column.
+10. At the bottom of the Swagger page, **Schemas → ApiErrorBody → code** now lists fifteen codes.

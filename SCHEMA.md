@@ -12,6 +12,8 @@
 >
 > **Added 2026-10-04 (3):** `users.locale` (section 3.1), the language the app shows the user, in migration `0007_add-user-locale.sql`.
 >
+> **Changed 2026-10-05:** `tasks.status` is gone. A task's status is read from its steps (section 7), in migration `0008_drop-task-status.sql`.
+>
 > **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
@@ -604,7 +606,7 @@ User 1 ───── N Goals
 -   Deleting the user deletes their goals.
 -   A goal is **active** (`archived_at IS NULL`) or **archived**.
     Archiving hides it from the active list and keeps everything under
-    it; unarchiving sets the column back to `NULL`.
+    it, read-only; unarchiving sets the column back to `NULL`.
 -   A goal with work history cannot be deleted (section 13). It is
     archived instead.
 
@@ -663,11 +665,6 @@ CREATE TABLE tasks (
 
   title TEXT NOT NULL,
 
-  status TEXT NOT NULL DEFAULT 'todo'
-    CHECK (
-      status IN ('todo', 'in_progress', 'done')
-    ),
-
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -690,6 +687,53 @@ Goal 1 ───── N Tasks
 -   A goal can have many tasks.
 -   A task belongs to one user.
 -   Deleting a goal deletes its tasks.
+-   Deleting a task deletes its steps. A task with work history cannot
+    be deleted (section 13).
+-   While its goal is archived, a task cannot be added, renamed or
+    deleted. The API refuses it; the goal is unarchived first.
+
+### Where is the status?
+
+Nowhere in this table. A task's status is read from its steps every
+time it is asked for:
+
+```text
+no step done (or no steps yet)   →  todo
+some steps done, not all         →  in_progress
+every step done                  →  done
+```
+
+```sql
+SELECT id, goal_id, title, created_at,
+       (SELECT CASE
+                 WHEN count(*) FILTER (WHERE done_at IS NOT NULL) = 0 THEN 'todo'
+                 WHEN count(*) FILTER (WHERE done_at IS NULL) = 0 THEN 'done'
+                 ELSE 'in_progress'
+               END
+          FROM steps
+         WHERE steps.task_id = tasks.id) AS status
+  FROM tasks
+ WHERE goal_id = $2 AND user_id = $1
+ ORDER BY created_at, id;
+```
+
+The first draft had a `status` column. It was removed because a stored
+status is a second copy of what the steps already say, and two copies
+can disagree: every step done, the column still `todo`. Read from the
+steps, the status cannot be wrong, and "a task is done automatically
+when all its steps are done" needs no code at all. It is the same idea
+as section 14: what can be counted is not stored.
+
+A count without `GROUP BY` always returns one row, also for a task with
+no steps, so the status is never `NULL`. `steps_task_idx` keeps the
+inner query to the steps of one task.
+
+### Whose goal is it?
+
+`goal_id` is a foreign key to the goal alone. It proves the goal exists,
+not that it belongs to the same user as the task. That is checked in
+the API before the insert: the goal is read with `user_id = $1`, and a
+goal that is someone else's is answered as not found (section 12).
 
 ------------------------------------------------------------------------
 
@@ -1185,6 +1229,7 @@ domain requires it.
 | Only one active session per user | Partial unique index |
 | Session cannot end before it starts | CHECK constraint |
 | Rating must be 1–5 | CHECK constraint |
+| A task's status always agrees with its steps | Not stored: read from `steps.done_at` |
 | Step positions are unique within a task | UNIQUE constraint |
 | Deleting a goal deletes its tasks and steps | ON DELETE CASCADE |
 | A step with sessions cannot be deleted, nor the task or goal above it | Foreign key with no ON DELETE action |

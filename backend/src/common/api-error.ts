@@ -42,6 +42,18 @@ export const API_ERRORS = {
     status: HttpStatus.CONFLICT,
     message: 'This has work history. Archive the goal instead.',
   },
+  'goal.archived': {
+    status: HttpStatus.CONFLICT,
+    message: 'This goal is archived. Unarchive it first.',
+  },
+  'task.not_found': {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Task not found.',
+  },
+  'task.has_work_history': {
+    status: HttpStatus.CONFLICT,
+    message: 'This task has work history. It cannot be deleted.',
+  },
 
   // A body or a query refused by a DTO. The answer carries the sentences
   // of the broken rules as `message`, and the rules themselves, by field,

@@ -43,6 +43,7 @@ describe('API docs', () => {
       '/api/auth/me',
       '/api/auth/register',
       '/api/goals',
+      '/api/goals/{goalId}/tasks',
       '/api/goals/{id}',
       '/api/goals/{id}/archive',
       '/api/goals/{id}/unarchive',
@@ -56,6 +57,7 @@ describe('API docs', () => {
       '/api/profile/sections/self-view',
       '/api/profile/sections/situation',
       '/api/profile/sections/values',
+      '/api/tasks/{id}',
     ]);
   });
 

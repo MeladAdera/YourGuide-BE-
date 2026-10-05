@@ -9,5 +9,7 @@ import { GoalsService } from './goals.service.js';
   imports: [ProfileModule],
   controllers: [GoalsController],
   providers: [GoalsService, GoalsRepository],
+  // For TasksService: a task is created under a goal it must read first.
+  exports: [GoalsRepository],
 })
 export class GoalsModule {}

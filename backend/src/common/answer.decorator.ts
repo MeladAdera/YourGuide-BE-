@@ -1,6 +1,12 @@
 import { applyDecorators } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
 /**
  * A few sentences. Generous on purpose: the limit exists so nobody can
@@ -49,5 +55,31 @@ export function Answer(options: AnswerOptions): PropertyDecorator {
     IsString(),
     MinLength(1),
     MaxLength(max),
+  );
+}
+
+/**
+ * A required answer inside a PATCH. It may be left out, which leaves it
+ * unchanged; if it is sent, it must be valid. `null` is refused, because a
+ * required answer cannot be cleared.
+ *
+ * `@IsOptional()` would be wrong here: it skips validation for `null` too,
+ * so `{ "title": null }` would be accepted and silently ignored.
+ * `@ValidateIf` skips the field only when it is really absent.
+ */
+export function Changed(options: {
+  example: string;
+  max: number;
+}): PropertyDecorator {
+  return applyDecorators(
+    ApiPropertyOptional({
+      type: String,
+      example: options.example,
+      maxLength: options.max,
+    }),
+    ValidateIf((_body: unknown, value: unknown) => value !== undefined),
+    IsString(),
+    MinLength(1),
+    MaxLength(options.max),
   );
 }

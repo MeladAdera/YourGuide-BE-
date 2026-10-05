@@ -54,7 +54,7 @@ The Linear issues were written for a later draft (v1.3) that is not in the repo.
 | `users.timezone` | no timezone column | YOU-13 (register), YOU-24 (progress per local day). **Added in `0002_add-user-timezone.sql`.** |
 | A way to archive a goal | no archive column | YOU-18. **Added in `0004_goal-archive-and-work-history.sql`** (`goals.archived_at`). |
 | Deleting a goal/task/step with sessions is refused (409) | `ON DELETE CASCADE` deletes the sessions too | YOU-18, YOU-19, YOU-20. **Changed in `0004`** for all three: `sessions.step_id` has no ON DELETE action. |
-| Task status derived from its steps | a stored `tasks.status` column | YOU-19, YOU-20 |
+| Task status derived from its steps | a stored `tasks.status` column | YOU-19, YOU-20. **Dropped in `0008_drop-task-status.sql`**; the status is read from the steps. |
 | Deferrable unique step position | a plain `UNIQUE (task_id, position)` | YOU-21 (reorder) |
 | Composite foreign keys for ownership | single-column foreign keys | No issue depends on it. Services check that the parent belongs to the user before inserting (YOU-19). |
 | Review fields only on an ended session | no such check | YOU-23 |
@@ -105,7 +105,7 @@ City, address, birthdate, languages, field of study, gender, health. The test fo
 
 ## 2026-10-04 — Work history cannot be deleted: the foreign key refuses, the API answers 409
 
-Planning (goals, tasks, steps) can be deleted; a focus session cannot, because it is the proof of progress the app exists to show. Schema v1 cascaded a goal delete all the way through its sessions. Migration `0004_goal-archive-and-work-history.sql` removes `ON DELETE CASCADE` from `sessions.step_id` only. PostgreSQL then refuses to delete a step that has sessions (error 23503), and with it the task or goal whose delete would cascade to that step. The service turns that one error into `409` "This has work history. Archive the goal instead." (YOU-18; tasks and steps reuse it in YOU-19 and YOU-20.)
+Planning (goals, tasks, steps) can be deleted; a focus session cannot, because it is the proof of progress the app exists to show. Schema v1 cascaded a goal delete all the way through its sessions. Migration `0004_goal-archive-and-work-history.sql` removes `ON DELETE CASCADE` from `sessions.step_id` only. PostgreSQL then refuses to delete a step that has sessions (error 23503), and with it the task or goal whose delete would cascade to that step. The service turns that one error into `409` "This has work history. Archive the goal instead." (YOU-18; tasks and steps reuse it in YOU-19 and YOU-20. Since 2026-10-05 a task answers with its own code and sentence: see that entry.)
 
 **Why not a check in the service?** "Does it have sessions?" followed by a delete has a gap between the two statements. The foreign key has none, and it is one statement instead of two. This is the same choice as the unique email index in register.
 
@@ -180,3 +180,41 @@ So the backend never translates. It answers with codes: an error has a `code` (`
 **`PATCH /api/auth/me` takes only `locale`.** Changing the timezone or the email are separate decisions with their own questions (which day does yesterday's session belong to? is the new email taken?). They are not part of this work.
 
 **Cost:** a third language is three changes that must agree: a migration for the CHECK, `SUPPORTED_LOCALES`, and a translation file in the frontend. That is the same price every option list in this schema pays.
+
+## 2026-10-05 — A task's status is read from its steps, never stored
+
+Schema v1 had `tasks.status` (`todo`, `in_progress`, `done`). Migration `0008_drop-task-status.sql` removes it. The status is computed in the query that reads the task (`SCHEMA.md` §7):
+
+| The steps | The status |
+|---|---|
+| No step done, or no steps yet | `todo` |
+| Some done, not all | `in_progress` |
+| Every step done | `done` |
+
+**Why:** a stored status is a second copy of what the steps already say. Something must then keep the two in step every time a step is marked, unmarked, added or deleted, and the day that code misses a case the app shows a finished task as unfinished. Read from the steps, the status cannot be wrong, and "a task is done automatically when all its steps are done" (`PROJECT.md` §6.2) needs no code.
+
+**Rejected: keep the column and update it in the steps service.** Four places to remember (done, undone, add, delete), each in the same transaction as the step change. **Rejected: a trigger.** It moves the same bookkeeping into the database, where it is harder to read and test.
+
+**What follows from the rule:** adding a step to a finished task makes it `in_progress` again, which is true. A task with no steps is `todo`. Starting a focus session does not change the status; only finished steps do.
+
+**The status cannot be sent.** `POST` and `PATCH` refuse a `status` field with 400, like any unknown field.
+
+**Cost:** one small inner query per task in a list, kept cheap by `steps_task_idx`. The column had never been written by any code, so nothing was lost.
+
+## 2026-10-05 — An archived goal is read-only; every write under it locks the goal first
+
+While a goal is archived, nothing under it changes. Adding a task, renaming one and deleting one all answer `409` `goal.archived`. Listing its tasks works. Unarchive the goal and every change is accepted again.
+
+**Why:** archiving means "I have put this away". A task that can still be renamed or deleted inside something put away is a surprise, and "read-only until unarchived" is one rule a person can keep in their head. The issue asked for the 409 on create only; we chose the wider rule after building it, on 2026-10-05. Steps (YOU-20) follow the same rule.
+
+**Not covered:** the goal's own routes. An archived goal can still be renamed, unarchived, or deleted when it has no work history.
+
+**The two questions, in this order:** is it yours (404), and is it active (409)? 404 comes first so that someone else's archived goal answers exactly like one that does not exist.
+
+**Why a check in the service this time?** For deletes we let a foreign key decide. Here no constraint can: `tasks.goal_id` proves the goal exists, not whose it is, and "not archived" is not something a foreign key knows. (The composite foreign keys of the later schema draft would cover ownership; we do not have them.)
+
+**Why a transaction with `FOR SHARE`?** A check followed by a write has a gap. In it the goal could be archived, and the change would land in an archived goal; or deleted, and an insert would crash with a foreign-key error. `SELECT … FOR SHARE` makes an archive or a delete of that goal wait until the write has committed, so the check and the write see the same goal. It runs in `withTransaction`, the helper register and screen 7 already use.
+
+**Cost:** renaming or deleting a task is now two statements in a transaction instead of one. The lock is on the goal, not the task, so the write still handles "no row" as 404.
+
+**A task with history has its own code.** Deleting it answers 409 `task.has_work_history`, not the goal's `goal.has_work_history`. The cause is the same foreign key, but the frontend needs a sentence about a task, and a task has no "archive it instead". The 2026-10-04 entry planned to reuse the goal's sentence; that was before errors had codes.

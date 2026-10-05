@@ -148,8 +148,8 @@ Rules:
 - We collect only what a feature reads: no city, address, birthdate, languages, field of study, gender or health. Age is a range; location is a country.
 
 ### 6.2 Goals, Tasks, Steps
-- Create a goal with why it matters; optionally what might get in the way and the first outcome. Every goal carries its own why. A goal without work history can be **deleted**; a goal with history is **archived**, so progress keeps it.
-- Add tasks under a goal. A task is **done automatically** when all its steps are done.
+- Create a goal with why it matters; optionally what might get in the way and the first outcome. Every goal carries its own why. A goal without work history can be **deleted**; a goal with history is **archived**, so progress keeps it. An archived goal is read-only: nothing under it changes until it is unarchived.
+- Add tasks under a goal. A task's status is never set by hand: it is read from its steps (to do, in progress, done), so a task is **done automatically** when all its steps are done.
 - Break each task into small steps. A step must be small enough to finish in one session.
 - AI helper: "Break this task into steps" (suggests steps, I accept or edit).
 
@@ -211,8 +211,8 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | DELETE | `/api/goals/:id` | Delete goal (409 if it has work history) |
 | POST | `/api/goals/:id/archive` | Archive goal |
 | POST | `/api/goals/:id/unarchive` | Unarchive goal |
-| POST | `/api/goals/:goalId/tasks` | Create task |
-| PATCH / DELETE | `/api/tasks/:id` | Update / delete task (409 if it has work history) |
+| GET / POST | `/api/goals/:goalId/tasks` | List the goal's tasks, each with its status / create a task (409 if the goal is archived) |
+| PATCH / DELETE | `/api/tasks/:id` | Rename / delete task (409 if the goal is archived, or the task has work history) |
 | POST | `/api/tasks/:taskId/steps` | Create step |
 | PATCH / DELETE | `/api/steps/:id` | Update / delete step (409 if it has work history) |
 | GET | `/api/sessions/active` | Current running session |

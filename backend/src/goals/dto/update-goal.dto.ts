@@ -1,31 +1,5 @@
-import { applyDecorators } from '@nestjs/common';
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
-import { Answer, MAX_ANSWER } from '../../common/answer.decorator.js';
+import { Answer, Changed, MAX_ANSWER } from '../../common/answer.decorator.js';
 import { MAX_GOAL_TITLE } from './create-goal.dto.js';
-
-/**
- * A required answer inside a PATCH. It may be left out, which leaves it
- * unchanged; if it is sent, it must be valid. `null` is refused, because a
- * required answer cannot be cleared.
- *
- * `@IsOptional()` would be wrong here: it skips validation for `null` too,
- * so `{ "title": null }` would be accepted and silently ignored.
- * `@ValidateIf` skips the field only when it is really absent.
- */
-function Changed(options: { example: string; max: number }): PropertyDecorator {
-  return applyDecorators(
-    ApiPropertyOptional({
-      type: String,
-      example: options.example,
-      maxLength: options.max,
-    }),
-    ValidateIf((_goal: unknown, value: unknown) => value !== undefined),
-    IsString(),
-    MinLength(1),
-    MaxLength(options.max),
-  );
-}
 
 /**
  * PATCH changes only the fields that are sent:

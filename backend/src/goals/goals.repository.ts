@@ -41,6 +41,61 @@ export class GoalsRepository {
     return rows.map(toGoal);
   }
 
+  /** One goal, or undefined when there is none or it is someone else's. */
+  async find(
+    executor: Executor,
+    userId: string,
+    goalId: string,
+  ): Promise<Goal | undefined> {
+    const { rows } = await executor.query<GoalRow>(
+      `SELECT ${COLUMNS} FROM goals WHERE id = $2 AND user_id = $1`,
+      [userId, goalId],
+    );
+    const row = rows[0];
+    return row === undefined ? undefined : toGoal(row);
+  }
+
+  /**
+   * The same read, and the goal then stays as it was read until the
+   * transaction ends: FOR SHARE makes an archive or a delete of this goal
+   * wait. For changing something under a goal, where "is it mine, is it
+   * active?" and the write must see the same goal. Only inside
+   * `withTransaction`; on the pool the lock would end with the statement.
+   */
+  async findLocked(
+    executor: Executor,
+    userId: string,
+    goalId: string,
+  ): Promise<Goal | undefined> {
+    const { rows } = await executor.query<GoalRow>(
+      `SELECT ${COLUMNS} FROM goals WHERE id = $2 AND user_id = $1 FOR SHARE`,
+      [userId, goalId],
+    );
+    const row = rows[0];
+    return row === undefined ? undefined : toGoal(row);
+  }
+
+  /**
+   * The goal a task is under, held as `findLocked` holds it. Undefined when
+   * the task does not exist or is someone else's. For changing something
+   * under a goal when only the task's id is known.
+   */
+  async findLockedOfTask(
+    executor: Executor,
+    userId: string,
+    taskId: string,
+  ): Promise<Goal | undefined> {
+    const { rows } = await executor.query<GoalRow>(
+      `SELECT ${COLUMNS} FROM goals
+        WHERE id = (SELECT goal_id FROM tasks WHERE id = $2 AND user_id = $1)
+          AND user_id = $1
+        FOR SHARE`,
+      [userId, taskId],
+    );
+    const row = rows[0];
+    return row === undefined ? undefined : toGoal(row);
+  }
+
   async create(
     executor: Executor,
     userId: string,

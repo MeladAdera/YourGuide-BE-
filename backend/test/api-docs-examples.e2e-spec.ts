@@ -84,13 +84,20 @@ function exampleOf(schema: Schema, document: OpenApiDocument): unknown {
 /**
  * The order the calls must run in: register first (it gives the cookie),
  * then login, then the onboarding screens (later routes need them), then
- * everything that creates something, then routes for one item (`/{id}`).
+ * everything that creates something, then routes for one item (they end
+ * in `/{id}`). Among the creating routes a parent sorts before what is
+ * created under it: `/api/goals` before `/api/goals/{goalId}/tasks`.
  */
 function rank(path: string): number {
   if (path === '/api/auth/register') return 0;
   if (path.startsWith('/api/auth/')) return 1;
   if (path.startsWith('/api/profile/sections/')) return 2;
-  return path.includes('{') ? 4 : 3;
+  return path.endsWith('}') ? 4 : 3;
+}
+
+/** `tasks` for `/api/goals/{goalId}/tasks`: what a POST there creates. */
+function lastSegment(path: string): string {
+  return path.split('/').pop() ?? '';
 }
 
 /** Every route in the document that takes a JSON body, with its example. */
@@ -138,15 +145,17 @@ describe('API docs examples', () => {
     resetRateLimits(app);
     const calls = callsWithBodies(await openApiDocument());
     let cookie = '';
-    // Collection path → id of the item its example created, for `/{id}`.
+    // Collection (`goals`, `tasks`) → id of the item its example created.
+    // A path parameter stands for an item of the collection named just
+    // before it: `goals/{goalId}`, `tasks/{id}`.
     const created = new Map<string, string>();
     const refused: string[] = [];
 
     for (const call of calls) {
       const path = call.path.replace(
-        /^(.*)\/\{id\}/,
-        (_match, collection: string) =>
-          `${collection}/${created.get(collection) ?? '{id}'}`,
+        /([^/]+)\/\{\w+\}/g,
+        (match, collection: string) =>
+          `${collection}/${created.get(collection) ?? match}`,
       );
       let req = request(app.getHttpServer())[call.method](path);
       if (cookie !== '') {
@@ -159,7 +168,7 @@ describe('API docs examples', () => {
       }
       const id = (response.body as { id?: unknown }).id;
       if (call.method === 'post' && typeof id === 'string') {
-        created.set(call.path, id);
+        created.set(lastSegment(call.path), id);
       }
       if (response.status >= 300) {
         refused.push(
@@ -176,6 +185,8 @@ describe('API docs examples', () => {
         '/api/profile/sections/values',
         '/api/goals',
         '/api/goals/{id}',
+        '/api/goals/{goalId}/tasks',
+        '/api/tasks/{id}',
       ]),
     );
   });

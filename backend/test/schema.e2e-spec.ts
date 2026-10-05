@@ -328,6 +328,22 @@ describe('Database schema', () => {
     expect(rows).toEqual([{ archived_at: null }]);
   });
 
+  it('stores no status on a task: it is read from the steps', async () => {
+    const { rows } = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'tasks'
+        ORDER BY ordinal_position`,
+    );
+
+    expect(rows.map((row) => row.column_name)).toEqual([
+      'id',
+      'user_id',
+      'goal_id',
+      'title',
+      'created_at',
+    ]);
+  });
+
   it('deleting a session keeps its struggle, without the session link', async () => {
     const { userId, stepId } = await insertStep();
     const sessionId = await insertSession(userId, stepId);
