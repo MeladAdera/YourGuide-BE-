@@ -809,6 +809,31 @@ UNIQUE (task_id, position)
 prevents two steps belonging to the same task from having the same
 position.
 
+### What position is, and is not
+
+-   A new step gets the highest position of its task plus one, so it
+    goes last. The task row is locked while this happens, so two steps
+    added at the same moment get two different numbers.
+-   The numbers can have gaps. Delete the second of three steps and the
+    positions are 1 and 3. The order is still right, which is all that
+    is asked of them.
+-   The API never returns `position`. It returns the steps in order,
+    and reordering (later) is sent as a list of ids. So no client can
+    come to depend on the numbers.
+
+### Rules
+
+-   A step belongs to exactly one task, and to one user.
+-   Deleting a task deletes its steps. A step with a focus session
+    cannot be deleted (section 13).
+-   `done_at` is written by the server. Marking a step done sets it to
+    now only when it is empty, so marking it twice keeps the first
+    time. Marking it not done clears it.
+-   While its goal is archived, a step cannot be added, renamed, marked
+    or deleted.
+-   Nothing is written to the task when a step changes. The task's
+    status is read from these rows (section 7).
+
 ### Why `done_at` and not `done`?
 
 ```text

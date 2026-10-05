@@ -9,7 +9,8 @@ import { GoalsService } from './goals.service.js';
   imports: [ProfileModule],
   controllers: [GoalsController],
   providers: [GoalsService, GoalsRepository],
-  // For TasksService: a task is created under a goal it must read first.
+  // For TasksService and StepsService: before a write under a goal, the
+  // goal is read and locked (see require-active.ts).
   exports: [GoalsRepository],
 })
 export class GoalsModule {}

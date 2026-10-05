@@ -57,7 +57,9 @@ describe('API docs', () => {
       '/api/profile/sections/self-view',
       '/api/profile/sections/situation',
       '/api/profile/sections/values',
+      '/api/steps/{id}',
       '/api/tasks/{id}',
+      '/api/tasks/{taskId}/steps',
     ]);
   });
 

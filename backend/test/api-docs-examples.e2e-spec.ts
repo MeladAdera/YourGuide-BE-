@@ -86,7 +86,8 @@ function exampleOf(schema: Schema, document: OpenApiDocument): unknown {
  * then login, then the onboarding screens (later routes need them), then
  * everything that creates something, then routes for one item (they end
  * in `/{id}`). Among the creating routes a parent sorts before what is
- * created under it: `/api/goals` before `/api/goals/{goalId}/tasks`.
+ * created under it: `/api/goals`, then `/api/goals/{goalId}/tasks`, then
+ * `/api/tasks/{taskId}/steps`.
  */
 function rank(path: string): number {
   if (path === '/api/auth/register') return 0;
@@ -187,6 +188,8 @@ describe('API docs examples', () => {
         '/api/goals/{id}',
         '/api/goals/{goalId}/tasks',
         '/api/tasks/{id}',
+        '/api/tasks/{taskId}/steps',
+        '/api/steps/{id}',
       ]),
     );
   });

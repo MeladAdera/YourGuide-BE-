@@ -9,5 +9,7 @@ import { TasksService } from './tasks.service.js';
   imports: [GoalsModule],
   controllers: [TasksController],
   providers: [TasksService, TasksRepository],
+  // For StepsService: a step is added under a task it must read first.
+  exports: [TasksRepository],
 })
 export class TasksModule {}

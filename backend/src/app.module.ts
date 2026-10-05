@@ -5,6 +5,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { GoalsModule } from './goals/goals.module.js';
 import { HealthModule } from './health/health.module.js';
 import { ProfileModule } from './profile/profile.module.js';
+import { StepsModule } from './steps/steps.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
 
 @Module({
@@ -16,6 +17,7 @@ import { TasksModule } from './tasks/tasks.module.js';
     ProfileModule,
     GoalsModule,
     TasksModule,
+    StepsModule,
   ],
 })
 export class AppModule {}

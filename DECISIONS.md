@@ -218,3 +218,24 @@ While a goal is archived, nothing under it changes. Adding a task, renaming one 
 **Cost:** renaming or deleting a task is now two statements in a transaction instead of one. The lock is on the goal, not the task, so the write still handles "no row" as 404.
 
 **A task with history has its own code.** Deleting it answers 409 `task.has_work_history`, not the goal's `goal.has_work_history`. The cause is the same foreign key, but the frontend needs a sentence about a task, and a task has no "archive it instead". The 2026-10-04 entry planned to reuse the goal's sentence; that was before errors had codes.
+
+## 2026-10-05 — Steps: the position stays in the database, and the time a step is done is the server's
+
+Three choices made with YOU-20.
+
+**The API does not return `position`.** A list of steps comes in order, and that order is all a client needs. A new step gets the highest position of its task plus one. Deleting a step in the middle leaves a gap (1, 3), which changes nothing about the order.
+
+*Why not close the gap on delete?* Shifting the later steps down is an `UPDATE` over several rows, and the plain `UNIQUE (task_id, position)` is checked row by row: whether it passes depends on the order PostgreSQL happens to update them in. It becomes safe with the deferrable constraint that reordering brings (YOU-21). Until then, hiding the number costs nothing: reordering sends ids in order, not numbers.
+
+**Adding a step locks the task row.** "Highest position plus one" is a read followed by a write. Two adds at the same moment would read the same highest position, and the unique constraint would refuse the second with a crash. `SELECT … FOR UPDATE` on the task makes the second add wait for the first. A test adds five steps at once; without the lock three of them fail.
+
+*Why not catch the unique violation and try again?* A retry loop is more code, and it hides a collision instead of preventing it. The lock is one statement.
+
+**`done` is a field of `PATCH /steps/:id`; the time is not.** The client sends `done: true` or `false`. The server writes `done_at`: now when the step was not done, unchanged when it already was, `NULL` for `false`. A `doneAt` in the body is refused like any unknown field.
+
+*Why a field here, when archiving a goal got its own routes?* Archiving is an event with consequences for everything under the goal. Done is a checkbox, ticked and unticked many times a day, often in the same edit as a new title. The rule that matters is the same in both: the client says what happened, the server says when.
+
+*Why keep the first time?* The progress page (week 5) counts steps finished per day from `done_at`. If marking a done step again moved the time, a double click late at night could move yesterday's work to today.
+
+**The archived rule covers steps too.** Adding, renaming, marking and deleting a step answer 409 `goal.archived` while the goal is archived (see the entry above). `requireActive` moved to `src/goals/require-active.ts` so tasks and steps ask in one place.
+

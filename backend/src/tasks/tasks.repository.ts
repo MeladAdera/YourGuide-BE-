@@ -63,6 +63,39 @@ export class TasksRepository {
     return rows.map(toTask);
   }
 
+  /** One task, or undefined when there is none or it is someone else's. */
+  async find(
+    executor: Executor,
+    userId: string,
+    taskId: string,
+  ): Promise<Task | undefined> {
+    const { rows } = await executor.query<TaskRow>(
+      `SELECT ${COLUMNS} FROM tasks WHERE id = $2 AND user_id = $1`,
+      [userId, taskId],
+    );
+    const row = rows[0];
+    return row === undefined ? undefined : toTask(row);
+  }
+
+  /**
+   * Holds the task until the transaction ends: a second request that asks
+   * for the same lock waits. For adding a step, where "which position is
+   * next?" and the INSERT must not be interleaved with another add.
+   * False when the task is not there or is someone else's. Only inside
+   * `withTransaction`.
+   */
+  async lock(
+    executor: Executor,
+    userId: string,
+    taskId: string,
+  ): Promise<boolean> {
+    const { rowCount } = await executor.query(
+      'SELECT 1 FROM tasks WHERE id = $2 AND user_id = $1 FOR UPDATE',
+      [userId, taskId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   /**
    * The caller has already checked that the goal belongs to this user:
    * the foreign key only proves the goal exists, not whose it is.

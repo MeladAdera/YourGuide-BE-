@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { ApiError } from '../common/api-error.js';
 import { DatabaseService } from '../database/database.service.js';
 import { isForeignKeyViolation } from '../database/pg-errors.js';
-import { Goal } from '../goals/dto/goal.dto.js';
 import { GoalsRepository } from '../goals/goals.repository.js';
+import { requireActive } from '../goals/require-active.js';
 import { SESSION_STEP_FK } from '../sessions/session-constraints.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
 import { Task } from './dto/task.dto.js';
@@ -80,26 +80,6 @@ export class TasksService {
       }
       throw error;
     }
-  }
-}
-
-/**
- * The two questions before every write under a goal, in this order: is it
- * yours (404), and is it active (409)? 404 first, so that someone else's
- * archived goal answers exactly like one that does not exist.
- *
- * `missing` is what the caller asked for by id: the goal when adding a
- * task, the task when changing one.
- */
-function requireActive(
-  goal: Goal | undefined,
-  missing: 'goal.not_found' | 'task.not_found',
-): void {
-  if (goal === undefined) {
-    throw new ApiError(missing);
-  }
-  if (goal.archivedAt !== null) {
-    throw new ApiError('goal.archived');
   }
 }
 

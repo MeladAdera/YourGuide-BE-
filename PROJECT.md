@@ -213,8 +213,8 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | POST | `/api/goals/:id/unarchive` | Unarchive goal |
 | GET / POST | `/api/goals/:goalId/tasks` | List the goal's tasks, each with its status / create a task (409 if the goal is archived) |
 | PATCH / DELETE | `/api/tasks/:id` | Rename / delete task (409 if the goal is archived, or the task has work history) |
-| POST | `/api/tasks/:taskId/steps` | Create step |
-| PATCH / DELETE | `/api/steps/:id` | Update / delete step (409 if it has work history) |
+| GET / POST | `/api/tasks/:taskId/steps` | List the task's steps in order / create a step, placed last (409 if the goal is archived) |
+| PATCH / DELETE | `/api/steps/:id` | Rename, mark done or not done / delete step (409 if the goal is archived, or the step has work history) |
 | GET | `/api/sessions/active` | Current running session |
 | POST | `/api/sessions` | Start session (`stepId`) |
 | POST | `/api/sessions/:id/end` | End session + review |

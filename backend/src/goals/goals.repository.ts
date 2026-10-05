@@ -96,6 +96,25 @@ export class GoalsRepository {
     return row === undefined ? undefined : toGoal(row);
   }
 
+  /** The goal a step is under, through its task. Otherwise as above. */
+  async findLockedOfStep(
+    executor: Executor,
+    userId: string,
+    stepId: string,
+  ): Promise<Goal | undefined> {
+    const { rows } = await executor.query<GoalRow>(
+      `SELECT ${COLUMNS} FROM goals
+        WHERE id = (SELECT tasks.goal_id
+                      FROM steps JOIN tasks ON tasks.id = steps.task_id
+                     WHERE steps.id = $2 AND steps.user_id = $1)
+          AND user_id = $1
+        FOR SHARE`,
+      [userId, stepId],
+    );
+    const row = rows[0];
+    return row === undefined ? undefined : toGoal(row);
+  }
+
   async create(
     executor: Executor,
     userId: string,
