@@ -965,12 +965,21 @@ ON sessions(user_id)
 WHERE ended_at IS NULL;
 ```
 
+The API turns the refusal into `409` with `session.already_active`
+(`DECISIONS.md`, 2026-10-06). It does not look for a running session
+first: a check has a gap, the index has none.
+
 ### Other rules
 
 -   A session belongs to exactly one user.
 -   A session belongs to exactly one step.
 -   `ended_at` cannot be earlier than `started_at`.
 -   Rating must be between 1 and 5.
+
+Three rules the database cannot state are asked by the API when a
+session starts: the step is the user's own, its goal is not archived,
+and the step is not done. And a goal is not archived while a session is
+running under it.
 
 ------------------------------------------------------------------------
 

@@ -257,3 +257,38 @@ Three choices made with YOU-20.
 
 **The one Swagger example that cannot be sent as it is.** The body must name the caller's own steps, so its pre-filled ids are refused with `400`. The examples test (2026-10-04) puts in the id its own `steps` example created, as a person would paste it by hand.
 
+## 2026-10-06 — Starting a focus session: the index allows one, a done step is refused, an archive waits
+
+`POST /api/sessions` takes `{ stepId }` and answers with the running session. `GET /api/sessions/active` returns it, or `404` (YOU-22). No migration: the table and its unique index exist since `0001`.
+
+**One running session per user: the unique index decides, not a check.** The service does not ask "is a session running?" before the insert. PostgreSQL refuses the second running session (`one_active_session_per_user`, error `23505`), and that one named error becomes `409` `session.already_active`.
+
+*Why:* a check followed by an insert has a gap, and a double click fits in it. A test sends two starts at once: one is `201`, the other `409`. The same choice as the unique email in register and the foreign key that protects work history.
+
+**The step is read `FOR KEY SHARE` before the insert.** Tried against PostgreSQL 16 first: a step is deleted in one connection, not yet committed, and a session is started on it in another. A plain `INSERT` waits and then fails on `sessions_step_id_fkey`, which would reach the user as `500`. So does `INSERT … SELECT` from the step without a lock. With the step read `FOR KEY SHARE` first, the read waits and then finds no step: `404`. The lock lets a rename or a tick through; only a delete waits.
+
+**A step that is done cannot be started: `409` `session.step_done`.** The issue was silent. Chosen on 2026-10-06, before building.
+
+*Why:* done means done. If there is more to do, the step is not done: untick it, and the task shows `in_progress` while the timer runs, which is true. *Rejected: allow it.* One rule fewer, but a task could then read `done` with a session running on one of its steps.
+
+The rule is about starting. Marking a step done while its session runs is allowed.
+
+**The session answer names the step, the task and the goal**, each as `{ id, title }`.
+
+*Why:* after a page reload the frontend has only `GET /sessions/active` to draw the timer screen from, and no route reads one step by its id. *Rejected: `stepId` only.* The smallest answer, but the timer screen could not say what you are working on without new routes. The titles are joined in when the answer is built, not copied into the session, so a rename shows in the next read. Both routes build the answer with the same statement.
+
+**A goal cannot be archived while a session runs under it: `409` `goal.session_running`.** Also chosen on 2026-10-06, before building.
+
+*Why:* an archived goal is read-only (2026-10-05), and a running session is a write still to come: ending it saves a review and can mark the step done. *Rejected: allow the archive.* Ending the session would then be the one write allowed under an archived goal. *Rejected: decide it with YOU-23.* The state would exist from the day sessions can be started.
+
+*How:* the archive locks the goal `FOR UPDATE`, then asks for a running session in the next statement, then archives. A start holds the goal `FOR SHARE`, so each waits for the other. *Rejected: one statement,* `UPDATE goals … WHERE NOT EXISTS (a running session)`. Tried against PostgreSQL 16 with a start left uncommitted: the `UPDATE` waits for the goal, then archives it anyway, because a statement sees the database as it was when the statement began. The result was an archived goal with a session running under it. The lock must be its own statement.
+
+*Cost:* archive was one statement and is now three in a transaction.
+
+**Nothing running is `404` `session.none_active`**, as the issue says, not `200` with `null`. An onboarding screen that is not saved yet answers the same way, so a client reads "not there yet" in one way.
+
+**The time is the server's.** `started_at` is the column's default, `now()`. A `startedAt` in the body is refused like any unknown field, for the same reason as a step's `doneAt`: the progress page counts minutes per day from it.
+
+**The path is `/api/sessions`, with the step in the body**, as the issue says. The session is the thing created. And a user has one running session at most, so "the running one" needs no id: `/sessions/active`.
+
+**Starting changes nothing else.** The step and the task's status are untouched. But the step is work history from the first second: it, its task and its goal answer `409` to a delete.

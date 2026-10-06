@@ -84,7 +84,8 @@ function exampleOf(schema: Schema, document: OpenApiDocument): unknown {
 /**
  * The order the calls must run in: register first (it gives the cookie),
  * then login, then the onboarding screens (later routes need them), then
- * everything that creates something, then routes for one item (they end
+ * everything that creates something, then a focus session (it starts on
+ * a step, so the step must be there), then routes for one item (they end
  * in `/{id}`). Among the creating routes a parent sorts before what is
  * created under it: `/api/goals`, then `/api/goals/{goalId}/tasks`, then
  * `/api/tasks/{taskId}/steps`.
@@ -93,7 +94,8 @@ function rank(path: string): number {
   if (path === '/api/auth/register') return 0;
   if (path.startsWith('/api/auth/')) return 1;
   if (path.startsWith('/api/profile/sections/')) return 2;
-  return path.endsWith('}') ? 4 : 3;
+  if (path === '/api/sessions') return 4;
+  return path.endsWith('}') ? 5 : 3;
 }
 
 /** `tasks` for `/api/goals/{goalId}/tasks`: what a POST there creates. */
@@ -102,10 +104,11 @@ function lastSegment(path: string): string {
 }
 
 /**
- * One kind of example cannot be right as it stands: a list of ids, such as
- * `stepIds`, must name the caller's own items. Here it becomes the id the
- * `steps` example created, which is what a person does by hand in Swagger:
- * copy the id from the answer above and paste it in.
+ * One kind of example cannot be right as it stands: an id in a body, such
+ * as `stepId` or the list `stepIds`, must name the caller's own item. Here
+ * it becomes the id the `steps` example created, which is what a person
+ * does by hand in Swagger: copy the id from the answer above and paste it
+ * in.
  */
 function withCreatedIds(body: unknown, created: Map<string, string>): unknown {
   if (typeof body !== 'object' || body === null) {
@@ -113,10 +116,13 @@ function withCreatedIds(body: unknown, created: Map<string, string>): unknown {
   }
   return Object.fromEntries(
     Object.entries(body).map(([name, value]) => {
-      const collection = /^(\w+)Ids$/.exec(name)?.[1];
+      const [, collection, list] = /^(\w+)Id(s?)$/.exec(name) ?? [];
       const id =
         collection === undefined ? undefined : created.get(`${collection}s`);
-      return [name, id === undefined ? value : [id]];
+      if (id === undefined) {
+        return [name, value];
+      }
+      return [name, list === 's' ? [id] : id];
     }),
   );
 }
@@ -212,6 +218,7 @@ describe('API docs examples', () => {
         '/api/tasks/{id}',
         '/api/tasks/{taskId}/steps',
         '/api/tasks/{taskId}/steps/order',
+        '/api/sessions',
         '/api/steps/{id}',
       ]),
     );

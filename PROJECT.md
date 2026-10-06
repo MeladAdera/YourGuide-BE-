@@ -148,13 +148,13 @@ Rules:
 - We collect only what a feature reads: no city, address, birthdate, languages, field of study, gender or health. Age is a range; location is a country.
 
 ### 6.2 Goals, Tasks, Steps
-- Create a goal with why it matters; optionally what might get in the way and the first outcome. Every goal carries its own why. A goal without work history can be **deleted**; a goal with history is **archived**, so progress keeps it. An archived goal is read-only: nothing under it changes until it is unarchived.
+- Create a goal with why it matters; optionally what might get in the way and the first outcome. Every goal carries its own why. A goal without work history can be **deleted**; a goal with history is **archived**, so progress keeps it. An archived goal is read-only: nothing under it changes until it is unarchived. A goal cannot be archived while a focus session is running under it.
 - Add tasks under a goal. A task's status is never set by hand: it is read from its steps (to do, in progress, done), so a task is **done automatically** when all its steps are done.
 - Break each task into small steps. A step must be small enough to finish in one session.
 - AI helper: "Break this task into steps" (suggests steps, I accept or edit).
 
 ### 6.3 Focus Session
-- Pick one step, start a timer.
+- Pick one step that is not done, start a timer. The start time is the server's.
 - Only **one active session per user** at a time (enforced by the database).
 - End the session manually.
 
@@ -209,15 +209,15 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | GET / POST | `/api/goals` | List (`?archived=true` for the archived ones) / create a goal with its why. `POST` is 409 until onboarding is complete |
 | PATCH | `/api/goals/:id` | Change a goal: only the fields that are sent |
 | DELETE | `/api/goals/:id` | Delete goal (409 if it has work history) |
-| POST | `/api/goals/:id/archive` | Archive goal |
+| POST | `/api/goals/:id/archive` | Archive goal (409 while a focus session is running under it) |
 | POST | `/api/goals/:id/unarchive` | Unarchive goal |
 | GET / POST | `/api/goals/:goalId/tasks` | List the goal's tasks, each with its status / create a task (409 if the goal is archived) |
 | PATCH / DELETE | `/api/tasks/:id` | Rename / delete task (409 if the goal is archived, or the task has work history) |
 | GET / POST | `/api/tasks/:taskId/steps` | List the task's steps in order / create a step, placed last (409 if the goal is archived) |
 | PUT | `/api/tasks/:taskId/steps/order` | Put the task's steps in a new order: `stepIds`, every step once (409 if the goal is archived) |
 | PATCH / DELETE | `/api/steps/:id` | Rename, mark done or not done / delete step (409 if the goal is archived, or the step has work history) |
-| GET | `/api/sessions/active` | Current running session |
-| POST | `/api/sessions` | Start session (`stepId`) |
+| GET | `/api/sessions/active` | The running session, with its step, task and goal by name. 404 when nothing is running |
+| POST | `/api/sessions` | Start session (`stepId`). 409 if the goal is archived, the step is done, or a session is already running |
 | POST | `/api/sessions/:id/end` | End session + review |
 | POST | `/api/struggles` | Describe struggle → AI advice |
 | PATCH | `/api/struggles/:id` | Mark continued / stopped |

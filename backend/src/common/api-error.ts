@@ -46,6 +46,10 @@ export const API_ERRORS = {
     status: HttpStatus.CONFLICT,
     message: 'This goal is archived. Unarchive it first.',
   },
+  'goal.session_running': {
+    status: HttpStatus.CONFLICT,
+    message: 'A focus session is running under this goal. End it first.',
+  },
   'task.not_found': {
     status: HttpStatus.NOT_FOUND,
     message: 'Task not found.',
@@ -65,6 +69,18 @@ export const API_ERRORS = {
   'step.order_mismatch': {
     status: HttpStatus.BAD_REQUEST,
     message: 'The list must hold every step of this task, each once.',
+  },
+  'session.already_active': {
+    status: HttpStatus.CONFLICT,
+    message: 'A focus session is already running. End it first.',
+  },
+  'session.none_active': {
+    status: HttpStatus.NOT_FOUND,
+    message: 'No focus session is running.',
+  },
+  'session.step_done': {
+    status: HttpStatus.CONFLICT,
+    message: 'This step is done. Mark it not done to work on it again.',
   },
 
   // A body or a query refused by a DTO. The answer carries the sentences

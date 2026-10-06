@@ -98,10 +98,15 @@ describe('/api/goals', () => {
     return step.rows[0]?.id ?? '';
   }
 
-  /** Work history: one focus session on the step. */
+  /**
+   * Work history: one focus session on the step, ended. Ended, because a
+   * goal cannot be archived while a session is still running under it
+   * (see sessions.e2e-spec.ts).
+   */
   async function addSession(stepId: string): Promise<void> {
     await pool.query(
-      'INSERT INTO sessions (user_id, step_id) VALUES ($1, $2)',
+      `INSERT INTO sessions (user_id, step_id, started_at, ended_at)
+       VALUES ($1, $2, now() - interval '25 minutes', now())`,
       [userId, stepId],
     );
   }

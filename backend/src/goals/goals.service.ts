@@ -37,8 +37,25 @@ export class GoalsService {
     return found(this.goals.update(this.db.pool, userId, goalId, input));
   }
 
+  /**
+   * A goal cannot be put away while a focus session is running on one of
+   * its steps: 409 until the session is ended. An archived goal is
+   * read-only, and a running session is a write still to come.
+   *
+   * The goal is locked first. A session being started under it holds the
+   * goal too, so this waits for it, and one that comes later waits for
+   * this. The question is then asked with no start possible in between.
+   */
   archive(userId: string, goalId: string): Promise<Goal> {
-    return found(this.goals.archive(this.db.pool, userId, goalId));
+    return this.db.withTransaction(async (client) => {
+      if (!(await this.goals.lock(client, userId, goalId))) {
+        throw new ApiError('goal.not_found');
+      }
+      if (await this.goals.hasRunningSession(client, userId, goalId)) {
+        throw new ApiError('goal.session_running');
+      }
+      return found(this.goals.archive(client, userId, goalId));
+    });
   }
 
   unarchive(userId: string, goalId: string): Promise<Goal> {

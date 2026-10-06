@@ -41,6 +41,28 @@ export class StepsRepository {
   }
 
   /**
+   * One step, and it then cannot be deleted until the transaction ends:
+   * FOR KEY SHARE makes a delete of this step wait, and lets a rename or a
+   * tick through. Undefined when there is no such step or it is someone
+   * else's, also when it was deleted while this read waited. For starting
+   * a focus session on the step. Only inside `withTransaction`.
+   */
+  async findLocked(
+    executor: Executor,
+    userId: string,
+    stepId: string,
+  ): Promise<Step | undefined> {
+    const { rows } = await executor.query<StepRow>(
+      `SELECT ${COLUMNS} FROM steps
+        WHERE id = $2 AND user_id = $1
+        FOR KEY SHARE`,
+      [userId, stepId],
+    );
+    const row = rows[0];
+    return row === undefined ? undefined : toStep(row);
+  }
+
+  /**
    * The new step goes last: the highest position of the task, plus one.
    * After a delete the numbers have a gap, and "highest plus one" still
    * puts the new step last.

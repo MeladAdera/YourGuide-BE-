@@ -76,6 +76,46 @@ export class GoalsRepository {
   }
 
   /**
+   * Holds the goal against every `findLocked…` read here, until the
+   * transaction ends: a write under the goal that comes later waits, and
+   * this waits for one that is under way. For archiving, where "is a
+   * session running under it?" and the archive must not have a session
+   * start in between. False when the goal is not there or is someone
+   * else's. Only inside `withTransaction`.
+   */
+  async lock(
+    executor: Executor,
+    userId: string,
+    goalId: string,
+  ): Promise<boolean> {
+    const { rowCount } = await executor.query(
+      'SELECT 1 FROM goals WHERE id = $2 AND user_id = $1 FOR UPDATE',
+      [userId, goalId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * True when a focus session is running on one of this goal's steps. The
+   * goal is not read here: the caller holds it (`lock`).
+   */
+  async hasRunningSession(
+    executor: Executor,
+    userId: string,
+    goalId: string,
+  ): Promise<boolean> {
+    const { rowCount } = await executor.query(
+      `SELECT 1 FROM sessions
+         JOIN steps ON steps.id = sessions.step_id
+         JOIN tasks ON tasks.id = steps.task_id
+        WHERE sessions.user_id = $1 AND sessions.ended_at IS NULL
+          AND tasks.goal_id = $2`,
+      [userId, goalId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
    * The goal a task is under, held as `findLocked` holds it. Undefined when
    * the task does not exist or is someone else's. For changing something
    * under a goal when only the task's id is known.

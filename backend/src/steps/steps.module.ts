@@ -11,5 +11,8 @@ import { StepsService } from './steps.service.js';
   imports: [GoalsModule, TasksModule],
   controllers: [StepsController],
   providers: [StepsService, StepsRepository],
+  // For SessionsService: a session starts on a step it must read and hold
+  // first.
+  exports: [StepsRepository],
 })
 export class StepsModule {}
