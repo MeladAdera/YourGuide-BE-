@@ -9,10 +9,11 @@
 export const SESSION_STEP_FK = 'sessions_step_id_fkey';
 
 /**
- * The unique index behind "one running session per user". It covers only
- * the rows where ended_at is NULL, so a user can have any number of ended
- * sessions and one that is running. PostgreSQL refuses a second running
- * one; the API turns the refusal into 409.
+ * The unique index behind "one active session per user". It covers only
+ * the rows with no outcome yet: a session that is running, or stopped and
+ * awaiting its review. A user can have any number of completed sessions
+ * and one active one. PostgreSQL refuses a second active one; the API
+ * turns the refusal into 409.
  *
  * Must match the index name in SCHEMA.md §9.
  */

@@ -85,17 +85,18 @@ function exampleOf(schema: Schema, document: OpenApiDocument): unknown {
  * The order the calls must run in: register first (it gives the cookie),
  * then login, then the onboarding screens (later routes need them), then
  * everything that creates something, then a focus session (it starts on
- * a step, so the step must be there), then routes for one item (they end
- * in `/{id}`). Among the creating routes a parent sorts before what is
- * created under it: `/api/goals`, then `/api/goals/{goalId}/tasks`, then
- * `/api/tasks/{taskId}/steps`.
+ * a step, so the step must be there) and its end, then routes for one
+ * item (they end in `/{id}`). Among the creating routes a parent sorts
+ * before what is created under it: `/api/goals`, then
+ * `/api/goals/{goalId}/tasks`, then `/api/tasks/{taskId}/steps`.
  */
 function rank(path: string): number {
   if (path === '/api/auth/register') return 0;
   if (path.startsWith('/api/auth/')) return 1;
   if (path.startsWith('/api/profile/sections/')) return 2;
   if (path === '/api/sessions') return 4;
-  return path.endsWith('}') ? 5 : 3;
+  if (path.startsWith('/api/sessions/')) return 5;
+  return path.endsWith('}') ? 6 : 3;
 }
 
 /** `tasks` for `/api/goals/{goalId}/tasks`: what a POST there creates. */
@@ -219,6 +220,7 @@ describe('API docs examples', () => {
         '/api/tasks/{taskId}/steps',
         '/api/tasks/{taskId}/steps/order',
         '/api/sessions',
+        '/api/sessions/{id}/end',
         '/api/steps/{id}',
       ]),
     );

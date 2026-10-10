@@ -109,7 +109,7 @@ export class GoalsController {
   @ApiNotFoundResponse({ description: NOT_FOUND })
   @ApiConflictResponse({
     description:
-      'A focus session is running on one of its steps. End the session first.',
+      'A focus session on one of its steps is not finished: it is running, or stopped and awaiting its review. End it first.',
   })
   @Post(':id/archive')
   @HttpCode(HttpStatus.OK)

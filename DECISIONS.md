@@ -57,7 +57,7 @@ The Linear issues were written for a later draft (v1.3) that is not in the repo.
 | Task status derived from its steps | a stored `tasks.status` column | YOU-19, YOU-20. **Dropped in `0008_drop-task-status.sql`**; the status is read from the steps. |
 | Deferrable unique step position | a plain `UNIQUE (task_id, position)` | YOU-21 (reorder). **Changed in `0009_step-position-deferrable.sql`** to `DEFERRABLE INITIALLY IMMEDIATE`. |
 | Composite foreign keys for ownership | single-column foreign keys | No issue depends on it. Services check that the parent belongs to the user before inserting (YOU-19). |
-| Review fields only on an ended session | no such check | YOU-23 |
+| Review fields only on an ended session | no such check | YOU-23. **Added in `0010_review-only-on-ended-session.sql`.** |
 
 ## 2026-10-01 — Rate limit per IP, counted in memory; proxies trusted only via `TRUST_PROXY`
 
@@ -292,3 +292,59 @@ The rule is about starting. Marking a step done while its session runs is allowe
 **The path is `/api/sessions`, with the step in the body**, as the issue says. The session is the thing created. And a user has one running session at most, so "the running one" needs no id: `/sessions/active`.
 
 **Starting changes nothing else.** The step and the task's status are untouched. But the step is work history from the first second: it, its task and its goal answer `409` to a delete.
+
+## 2026-10-06 — Ending a focus session: one UPDATE asks and acts, `done` finishes the step
+
+`POST /api/sessions/:id/end` takes `{ outcome, rating, note? }` and answers with the ended session (YOU-23).
+
+**One statement decides and ends.**
+
+```sql
+UPDATE sessions SET ended_at = now(), outcome = $3, rating = $4, note = $5
+ WHERE id = $2 AND user_id = $1 AND ended_at IS NULL
+```
+
+No row changed means the user has no running session with this id, and the answer is `404` `session.not_found`. That is one answer for three cases: no such session, someone else's, already ended.
+
+*Why one answer?* Someone else's session must look like one that does not exist, as everywhere. And "already ended" cannot be told apart from the other two without a second read, which would bring back the gap the single statement closes. *Why no check first?* "Is it running?" followed by an update lets a double click end a session twice, the second review overwriting the first. With the question inside the `UPDATE`, the second request finds nothing to end; a test sends two ends at once and gets `200` and `404`.
+
+**A review is written once.** The first review stands; a second end is `404` and changes nothing. There is no route to edit a review. The issue does not ask for one, and a review is a record of how the session felt when it ended.
+
+**Outcome `done` marks the step done, in the same transaction.** The session ends and the step is done, or neither happens. The step's `done_at` is the transaction's `now()`, the same instant as `ended_at`. A step ticked by hand while the session ran keeps its earlier time (the rule from 2026-10-05). The other four outcomes leave the step alone.
+
+**No goal lock when ending**, although marking a step is a write under a goal. A goal cannot be archived while a session runs under it (the entry above), and the session runs until this transaction commits. So the rule "archived is read-only" needs no extra lock here, and no exception.
+
+**The path carries the id**, although a user has one running session at most. "End the running one" from a tab left open since yesterday would end today's session. With the id, a tab can only end the session it was showing.
+
+**`rating` is required**, as the issue says, like `outcome`. `note` is optional, up to 1000 characters, and a missing note is stored as `NULL`.
+
+**The time is the server's**, as at the start. An `endedAt` in the body is refused like any unknown field. Focus minutes per day are end minus start, so neither may come from the client.
+
+**The answer is the running session's shape plus the end**: `endedAt`, `outcome`, `rating`, `note`. Two classes, `Session` and `EndedSession`, so each says exactly what it holds. The `UPDATE` joins the step, task and goal in with `FROM` and returns them, so the statement that ends the session also builds the answer.
+
+**Migration `0010`: a review only on an ended session.** `CHECK (ended_at IS NOT NULL OR (outcome IS NULL AND note IS NULL AND rating IS NULL))`. The API cannot write a review on a running session; the constraint makes it true for a row changed by hand too.
+
+*Why not also "an ended session always has a review"?* The API already guarantees it for every session it ends. As a constraint it would forbid closing a session without a review, and two cases may want exactly that: a session left running overnight, and one started by mistake. Both are open questions (`PROJECT.md` §12). A constraint is easy to add later and awkward to remove once code leans on it.
+
+**Not built:** editing a review, discarding a session, and anything about sessions left running. The last one matters for the progress page: a session forgotten for a night counts all its hours when it is finally ended.
+
+## 2026-10-10 — A session has three states: running, awaiting review, completed
+
+Four rules the user wrote into `PROJECT.md` §6.3 on 2026-10-10: nothing closes a session automatically; the review may be postponed, but the session stays open until it is written; no ending without a review; no cancelling a session started by mistake. Three were already true of the code (YOU-22, YOU-23). The second needed a decision: when the review is postponed, does the clock keep running? **It stops.** Chosen on 2026-10-10, before building.
+
+**The states.** Running: `ended_at` empty, no review. Awaiting review: `ended_at` set, no review. Completed: reviewed. The first two are *active*: while one exists, no other session starts and the goal above it is not archived.
+
+**Why the clock stops.** Focus minutes are `ended_at − started_at`, and they are the progress page's first number. Someone who stops working at six and writes the review at ten should not have four extra hours. *Rejected: the clock runs until the review.* Nothing to build, but the minutes would have measured when the form was filled in, not when the work was done.
+
+**"Active" now means "not reviewed".** Migration `0011` recreates `one_active_session_per_user` as `UNIQUE (user_id) WHERE outcome IS NULL`, same name, so the code that catches the refusal is unchanged. With the old predicate, `ended_at IS NULL`, stopping the clock would have let a new session start with the review still owed. Tried against PostgreSQL 16 first: a stopped session blocks a second insert, a reviewed one does not.
+
+**A review is whole.** `CHECK ((outcome IS NULL) = (rating IS NULL))`, so a row is awaiting review or completed, never half of each. The 2026-10-06 check (a review only on an ended session) stays. "An ended session always has a review" is still not a constraint: a stopped session is ended and unreviewed, by design now.
+
+**Two routes, not three.** `POST /sessions/:id/stop` stops the clock, nothing else; 404 `session.not_running` when the session is not running (not there, not yours, already stopped). `POST /sessions/:id/end` writes the review for a running *or* a stopped session: `ended_at = COALESCE(ended_at, now())`, `WHERE outcome IS NULL`; 404 `session.not_found` when there is nothing left to review. One form on the frontend, whichever way the session got there. *Rejected: a separate `/review` route for stopped sessions.* The review screen would have had two ways to send the same body.
+
+**The step is done when the clock stopped.** Outcome `done` sets `steps.done_at` to the session's `ended_at`, in one statement that reads it from the session row, not to `now()`. A review written the next morning does not move the step to the next day on the progress page. A step ticked while the session ran keeps its earlier time, as before.
+
+**Codes kept, sentences reworded.** `session.already_active`, `session.not_found` and `goal.session_running` keep their names (a code is never renamed) and say "open" and "not finished" instead of "running".
+
+**What the four rules settle.** The two open questions of 2026-10-06 (a forgotten session, a mistaken start) are closed: a forgotten session counts its hours until the user stops it, and a mistaken start is ended with a review like any other. The "Not built" list of that entry is superseded by this one; editing a review is still not built.
+

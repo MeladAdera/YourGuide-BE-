@@ -155,15 +155,20 @@ Rules:
 
 ### 6.3 Focus Session
 - Pick one step that is not done, start a timer. The start time is the server's.
-- Only **one active session per user** at a time (enforced by the database).
-- End the session manually.
+- A session is **active** until it is reviewed: *running* while the clock counts, *awaiting review* once the clock is stopped without a review.
+- Only **one active session per user** at a time (enforced by the database). Nothing else starts, and the goal above it is not archived, until the session is reviewed.
+- Nothing closes a session but the user. Leaving the app leaves the clock running; the session is there when they come back.
+- "Later" on the review screen stops the clock. The review is still owed and can be written at any later time; the minutes stay those of the clock.
+- A session cannot end without its review: outcome and rating are required, the note is optional.
+- A session started by mistake cannot be cancelled or discarded. It is ended like any other, with its review.
 
 ### 6.4 Session Review
 When a session ends:
 - Outcome: `done` / `progress` / `stuck` / `distracted` / `tired`
 - What did I do? (short note)
 - Rating of the session: 1–5
-- Outcome `done` marks the step as done automatically.
+- Outcome `done` marks the step as done automatically, as of the time the clock stopped. The other four leave it as it is.
+- The end time is the server's: when the clock was stopped, or the moment of the review if it was not stopped first. A session is reviewed once; the review cannot be changed afterwards.
 
 ### 6.5 Evaluation (later phase)
 - For study tasks: AI generates a short quiz from my session notes.
@@ -216,9 +221,10 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | GET / POST | `/api/tasks/:taskId/steps` | List the task's steps in order / create a step, placed last (409 if the goal is archived) |
 | PUT | `/api/tasks/:taskId/steps/order` | Put the task's steps in a new order: `stepIds`, every step once (409 if the goal is archived) |
 | PATCH / DELETE | `/api/steps/:id` | Rename, mark done or not done / delete step (409 if the goal is archived, or the step has work history) |
-| GET | `/api/sessions/active` | The running session, with its step, task and goal by name. 404 when nothing is running |
-| POST | `/api/sessions` | Start session (`stepId`). 409 if the goal is archived, the step is done, or a session is already running |
-| POST | `/api/sessions/:id/end` | End session + review |
+| GET | `/api/sessions/active` | The active session, running (`endedAt` null) or awaiting its review, with its step, task and goal by name. 404 when none is active |
+| POST | `/api/sessions` | Start session (`stepId`). 409 if the goal is archived, the step is done, or a session is still active |
+| POST | `/api/sessions/:id/stop` | Stop the clock without a review ("Later"). The session stays active until it is reviewed. 404 if it is not running |
+| POST | `/api/sessions/:id/end` | End a running or stopped session with its review: `outcome`, `rating`, optional `note`. `done` marks the step done as of the end time. 404 if it is not active, or not yours |
 | POST | `/api/struggles` | Describe struggle → AI advice |
 | PATCH | `/api/struggles/:id` | Mark continued / stopped |
 | GET | `/api/progress?days=7` | Progress data for charts |

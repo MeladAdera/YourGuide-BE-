@@ -16,6 +16,10 @@
 >
 > **Changed 2026-10-05 (2):** the unique constraint on a step's position is deferrable, so the steps of a task can be reordered in one statement (section 8), in migration `0009_step-position-deferrable.sql`.
 >
+> **Changed 2026-10-06:** a review (`outcome`, `note`, `rating`) can only be on a session that has ended (section 9), in migration `0010_review-only-on-ended-session.sql`.
+>
+> **Changed 2026-10-10:** a session is active until it is reviewed, not until its clock stops: the one-active-session index covers `outcome IS NULL`, and a review is an outcome and a rating together (section 9), in migration `0011_session-awaiting-review.sql`.
+>
 > **Migrations:** the files in `backend/migrations/` implement this document. The two must always match.
 
 ## 1. Purpose
@@ -929,7 +933,19 @@ CREATE TABLE sessions (
   CHECK (
     ended_at IS NULL
     OR ended_at > started_at
-  )
+  ),
+
+  -- A review is what is said about a session once it is over. A running
+  -- session has none.
+  CONSTRAINT sessions_review_only_when_ended
+    CHECK (
+      ended_at IS NOT NULL
+      OR (outcome IS NULL AND note IS NULL AND rating IS NULL)
+    ),
+
+  -- A review is an outcome and a rating together, or nothing yet.
+  CONSTRAINT sessions_review_complete
+    CHECK ((outcome IS NULL) = (rating IS NULL))
 );
 
 CREATE INDEX sessions_user_started_idx
@@ -949,12 +965,21 @@ A step can be worked on across multiple focus sessions.
 
 ### Important business rule
 
-A user can only have one active focus session.
+A session has three states:
+
+| State | `ended_at` | `outcome`, `rating` |
+|---|---|---|
+| running: the clock counts | NULL | NULL |
+| awaiting review: the clock has stopped, the review is still owed | set | NULL |
+| completed: reviewed | set | set |
+
+A user can only have one **active** focus session: one that is not yet
+reviewed, running or awaiting its review.
 
 An active session is one where:
 
 ```text
-ended_at IS NULL
+outcome IS NULL
 ```
 
 Database enforcement:
@@ -962,12 +987,12 @@ Database enforcement:
 ```sql
 CREATE UNIQUE INDEX one_active_session_per_user
 ON sessions(user_id)
-WHERE ended_at IS NULL;
+WHERE outcome IS NULL;
 ```
 
 The API turns the refusal into `409` with `session.already_active`
-(`DECISIONS.md`, 2026-10-06). It does not look for a running session
-first: a check has a gap, the index has none.
+(`DECISIONS.md`, 2026-10-06 and 2026-10-10). It does not look for an
+active session first: a check has a gap, the index has none.
 
 ### Other rules
 
@@ -975,6 +1000,13 @@ first: a check has a gap, the index has none.
 -   A session belongs to exactly one step.
 -   `ended_at` cannot be earlier than `started_at`.
 -   Rating must be between 1 and 5.
+-   A review is only on an ended session. The API writes the review in
+    one `UPDATE` that also sets `ended_at` if the clock was not stopped
+    before. The other direction is not a constraint: a session whose
+    clock was stopped with "Later" is ended and has no review yet
+    (`DECISIONS.md`, 2026-10-06 and 2026-10-10).
+-   A review is an outcome and a rating together, or nothing yet. The
+    note is optional.
 
 Three rules the database cannot state are asked by the API when a
 session starts: the step is the user's own, its goal is not archived,
@@ -1292,9 +1324,11 @@ domain requires it.
 | Step belongs to one task | FK |
 | Session belongs to one step | FK |
 | Struggle may optionally belong to a session | Nullable FK |
-| Only one active session per user | Partial unique index |
+| Only one active (not yet reviewed) session per user | Partial unique index on `outcome IS NULL` |
+| A review is an outcome and a rating together | CHECK constraint |
 | Session cannot end before it starts | CHECK constraint |
 | Rating must be 1–5 | CHECK constraint |
+| A review is only on a session that has ended | CHECK constraint |
 | A task's status always agrees with its steps | Not stored: read from `steps.done_at` |
 | Step positions are unique within a task | UNIQUE constraint, deferrable: checked when a statement ends |
 | Deleting a goal deletes its tasks and steps | ON DELETE CASCADE |

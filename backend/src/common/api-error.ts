@@ -48,7 +48,7 @@ export const API_ERRORS = {
   },
   'goal.session_running': {
     status: HttpStatus.CONFLICT,
-    message: 'A focus session is running under this goal. End it first.',
+    message: 'A focus session under this goal is not finished. End it first.',
   },
   'task.not_found': {
     status: HttpStatus.NOT_FOUND,
@@ -72,11 +72,19 @@ export const API_ERRORS = {
   },
   'session.already_active': {
     status: HttpStatus.CONFLICT,
-    message: 'A focus session is already running. End it first.',
+    message: 'A focus session is still open. End it first.',
   },
   'session.none_active': {
     status: HttpStatus.NOT_FOUND,
-    message: 'No focus session is running.',
+    message: 'No focus session is open.',
+  },
+  'session.not_found': {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Session not found, or it has already been reviewed.',
+  },
+  'session.not_running': {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Session not found, or it is not running.',
   },
   'session.step_done': {
     status: HttpStatus.CONFLICT,

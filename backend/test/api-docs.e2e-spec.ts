@@ -59,6 +59,8 @@ describe('API docs', () => {
       '/api/profile/sections/values',
       '/api/sessions',
       '/api/sessions/active',
+      '/api/sessions/{id}/end',
+      '/api/sessions/{id}/stop',
       '/api/steps/{id}',
       '/api/tasks/{id}',
       '/api/tasks/{taskId}/steps',

@@ -38,9 +38,10 @@ export class GoalsService {
   }
 
   /**
-   * A goal cannot be put away while a focus session is running on one of
-   * its steps: 409 until the session is ended. An archived goal is
-   * read-only, and a running session is a write still to come.
+   * A goal cannot be put away while a focus session on one of its steps
+   * is still active, running or awaiting its review: 409 until the review
+   * is written. An archived goal is read-only, and an unreviewed session
+   * is a write still to come (its review can mark the step done).
    *
    * The goal is locked first. A session being started under it holds the
    * goal too, so this waits for it, and one that comes later waits for
@@ -51,7 +52,7 @@ export class GoalsService {
       if (!(await this.goals.lock(client, userId, goalId))) {
         throw new ApiError('goal.not_found');
       }
-      if (await this.goals.hasRunningSession(client, userId, goalId)) {
+      if (await this.goals.hasActiveSession(client, userId, goalId)) {
         throw new ApiError('goal.session_running');
       }
       return found(this.goals.archive(client, userId, goalId));

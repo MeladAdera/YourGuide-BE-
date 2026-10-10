@@ -7,6 +7,8 @@ Two different things are called "session" in this project. The login session is 
 | # | Step | Linear | Status |
 |---|---|---|---|
 | 1 | [Start a session](#step-1--start-a-session) | YOU-22 | Done |
+| 2 | [End a session with its review](#step-2--end-a-session-with-its-review) | YOU-23 | Done |
+| 3 | [Stop the clock, review later](#step-3--stop-the-clock-review-later) | YOU-23 | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -193,7 +195,7 @@ Archive was one statement. It is now three in a transaction. It is a rare action
 **8. What starting does not do**
 
 - It does not change the step, and it does not move the task's status. Only a step marked done does (week 3: the status is read from the steps).
-- It cannot be undone through the API yet. Ending a session is the next step. Until then a session is ended by hand, with SQL (see *Check it*).
+- It does not end by itself. A session runs until it is ended with its review, which is step 2 on this page.
 - It makes the step work history at once. From the first second, the step, its task and its goal cannot be deleted (`409`), by the foreign key from week 3.
 
 **9. The tests** (`test/sessions.e2e-spec.ts`)
@@ -223,7 +225,7 @@ And the rest:
 | A delete or an archive at the same moment | `at the same moment as another request` (two tests) |
 | Archive is refused while a session runs, for this goal only | `archiving a goal while a session runs under it` (five tests) |
 | Bad bodies | six cases: no `stepId`, not a UUID, a number, `null`, a `startedAt`, a `userId` |
-| `401` without a login | `needs a login on both endpoints` |
+| `401` without a login | `needs a login on every endpoint` |
 | The Swagger examples work | `accepts every request example exactly as Swagger pre-fills it` |
 
 The two "same moment" tests and the archive race do not sleep and hope. They open a second connection, leave its transaction unfinished, send the request, and wait until PostgreSQL itself reports a connection waiting for a lock. Only then do they commit.
@@ -238,30 +240,416 @@ All 351 tests pass. There is no migration to run.
 
 Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running). In Apidog, import `http://localhost:3001/api/docs-json` again first, so the two new routes appear under **sessions**.
 
-Ending a session comes in the next step. Until then, end one by hand in pgAdmin (<http://localhost:5050>):
-
-```sql
-UPDATE sessions SET ended_at = now() WHERE ended_at IS NULL;
-```
+Some of these checks need a session to be over. Ending one is step 2 on this page: **POST /sessions/{id}/end**, with the session's `id` from the answer of **POST /sessions**. In this list, send it `{ "outcome": "progress", "rating": 3 }`, which leaves the step not done.
 
 1. **POST /auth/login**. **GET /goals** → copy a goal's `id`. **GET /goals/{goalId}/tasks** → copy a task's `id`. **GET /tasks/{taskId}/steps** → copy the ids of two steps that are not done. (Add some with **POST /tasks/{taskId}/steps** if needed.)
 2. **GET /sessions/active** → `404` with `"code": "session.none_active"`. Nothing is running yet.
 3. **POST /sessions** → *Execute* with the body exactly as pre-filled → `404` with `"code": "step.not_found"`. This is the one example that cannot work as it is: that id is nobody's step.
-4. **POST /sessions** → replace the example id with your first step's id → `201`. The answer has `startedAt` and the titles of the step, its task and its goal.
+4. **POST /sessions** → replace the example id with your first step's id → `201`. The answer has `startedAt` and the titles of the step, its task and its goal. Copy the session's `id`.
 5. **GET /sessions/active** → `200`, the same session.
 6. **POST /sessions** with your second step's id → `409` with `"code": "session.already_active"`. One at a time.
 7. **GET /goals/{goalId}/tasks** → the task's `status` is what it was. Starting work does not move it.
 8. **PATCH /steps/{id}** on the first step with `{ "title": "Understand SELECT and WHERE" }`. **GET /sessions/active** → the step's new title.
 9. **DELETE /steps/{id}** on the first step → `409` with `"code": "step.has_work_history"`.
 10. **POST /goals/{id}/archive** → `409` with `"code": "goal.session_running"`.
-11. In pgAdmin, run the `UPDATE` above. **GET /sessions/active** → `404` again.
-12. **PATCH /steps/{id}** on the first step with `{ "done": true }`. **POST /sessions** with its id → `409` with `"code": "session.step_done"`. **PATCH** it with `{ "done": false }`, then **POST /sessions** again → `201`.
-13. In pgAdmin, run the `UPDATE` again. **POST /goals/{id}/archive** → `200` this time. **POST /sessions** with the second step's id → `409` with `"code": "goal.archived"`. Then **POST /goals/{id}/unarchive**.
+11. **POST /sessions/{id}/end** with the session's id and `{ "outcome": "progress", "rating": 3 }` → `200`. **GET /sessions/active** → `404` again.
+12. **PATCH /steps/{id}** on the first step with `{ "done": true }`. **POST /sessions** with its id → `409` with `"code": "session.step_done"`. **PATCH** it with `{ "done": false }`, then **POST /sessions** again → `201`. Copy this session's `id`.
+13. End this session the same way. **POST /goals/{id}/archive** → `200` this time. **POST /sessions** with the second step's id → `409` with `"code": "goal.archived"`. Then **POST /goals/{id}/unarchive**.
 14. **POST /sessions** with `{ "stepId": "<your step id>", "startedAt": "2020-01-01T00:00:00.000Z" }` → `400`: `{ "field": "startedAt", "code": "whitelistValidation" }`. The time is the server's.
-15. In pgAdmin:
+15. In pgAdmin (<http://localhost:5050>):
 
     ```sql
     SELECT step_id, started_at, ended_at FROM sessions ORDER BY started_at;
     ```
 
     The sessions from steps 4 and 12, both ended. Nothing the refused calls tried was saved.
+
+---
+
+## Step 2 — End a session with its review
+
+### Why
+
+A running session is only a start time. It becomes worth something when it ends.
+
+- **Minutes need an end.** Focus minutes are end time minus start time. Until a session can end, the progress page has nothing to add up. A running session also blocks the next one, and it blocks archiving its goal.
+- **The review is the honest part.** Three things: how it went (`done`, `progress`, `stuck`, `distracted`, `tired`), how it felt (1 to 5), and a short note if you want one. "Stuck" and "tired" are not failures to hide. They are answers the app needs: a step that reads stuck, stuck, progress, done shows that staying with it worked, and that is the proof this app exists to give.
+- **`done` finishes the step.** One tap, not two, and the session and the step cannot disagree about whether the work got finished.
+
+It is built now because:
+
+- **The progress page (the next step) reads ended sessions**: minutes per day from the two times, steps finished per day from `done_at`.
+- **The AI advice (week 6) reads the last sessions** and their outcomes, to know how the week has gone before it says anything.
+- **The review screen (week 10) sends exactly this body.**
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0010_review-only-on-ended-session.sql` | Database | A review can only be on a session that has ended |
+| `src/sessions/dto/end-session.dto.ts` | Boundary | `outcome`, `rating`, and an optional `note` |
+| `src/sessions/dto/session.dto.ts` | Boundary | `EndedSession`: the session, its end and its review |
+| `src/sessions/sessions.repository.ts` | Repository | `end`: one `UPDATE` that ends, reviews and returns the answer |
+| `src/sessions/sessions.service.ts` | Service | `end`: the update, then the step when the outcome is `done`, in one transaction |
+| `src/sessions/sessions.controller.ts` | Controller | `POST /api/sessions/:id/end` |
+| `src/common/api-error.ts` | Rule | `session.not_found` |
+| `test/sessions.e2e-spec.ts` | Test | 27 new tests, 62 in the file |
+| `test/schema.e2e-spec.ts` | Test | The new constraint; the rating and outcome tests now end the session they review |
+| `test/api-docs.e2e-spec.ts`, `test/api-docs-examples.e2e-spec.ts` | Test | Know the new path; the examples test ends the session its own example started |
+
+### How it works
+
+**The route**
+
+```
+POST /api/sessions/:id/end
+{ "outcome": "done", "rating": 4, "note": "Wrote three SELECT queries on the orders table." }
+```
+
+answers `200` with the session, ended:
+
+```
+{ "id": "613e…", "startedAt": "2026-10-06T18:54:00.439Z",
+  "endedAt": "2026-10-06T18:54:00.523Z",
+  "outcome": "done", "rating": 4,
+  "note": "Wrote three SELECT queries on the orders table.",
+  "step": { "id": "bc35…", "title": "Understand SELECT" },
+  "task": { "id": "7134…", "title": "Learn PostgreSQL" },
+  "goal": { "id": "cf2f…", "title": "Ship my first product" } }
+```
+
+| Field | Rule |
+|---|---|
+| `outcome` | Required. One of `done`, `progress`, `stuck`, `distracted`, `tired` |
+| `rating` | Required. A whole number from 1 to 5 |
+| `note` | Optional. Up to 1000 characters. Left out or `null`: no note |
+
+| Problem | Status | Code |
+|---|---|---|
+| No cookie, or the login is gone | `401` | `auth.not_logged_in` |
+| A missing or unknown `outcome`, a `rating` that is not a whole number from 1 to 5, an empty or too long `note`, an unknown field (`endedAt` is one) | `400` | `validation.failed` |
+| An id in the path that is not a UUID | `400` | `bad_request` |
+| No running session with that id: there is none, **it belongs to someone else**, or it has already ended | `404` | `session.not_found` |
+
+**1. One statement asks and acts** (`SessionsRepository.end`)
+
+```sql
+UPDATE sessions
+   SET ended_at = now(), outcome = $3, rating = $4, note = $5
+  FROM steps
+  JOIN tasks ON tasks.id = steps.task_id
+  JOIN goals ON goals.id = tasks.goal_id
+ WHERE sessions.id = $2 AND sessions.user_id = $1
+   AND sessions.ended_at IS NULL
+   AND steps.id = sessions.step_id
+RETURNING sessions.id, sessions.started_at, sessions.ended_at, …
+```
+
+"Is this session yours, and is it still running?" is the `WHERE` of the statement that ends it. If no row comes back, there was nothing to end, and the answer is `404`.
+
+*Why is "already ended" a `404`, and not its own error?* Telling it apart from "not yours" and "not there" would take a second read. That read is exactly the gap this statement does not have. And someone else's session must look like no session at all, as everywhere.
+
+*Why not look first, then update?* A double click on "End". Both requests would see a running session, and the second review would overwrite the first. Here the second request waits for the first, looks again, and finds `ended_at` filled in: no row. The test `lets one of two ends at the same moment through` sends two at once and gets `200` and `404`.
+
+So a review is written once. A second end changes nothing, and there is no route to edit a review.
+
+The `FROM` joins the step, the task and the goal in, so the same statement that ends the session returns the whole answer.
+
+(Step 3 changes the `WHERE` to `outcome IS NULL` and the `SET` to `ended_at = COALESCE(ended_at, now())`: a session whose clock was stopped earlier can still be reviewed, and keeps its time.)
+
+**2. `done` finishes the step, in the same transaction** (`SessionsService.end`)
+
+```ts
+return this.db.withTransaction(async (client) => {
+  const ended = await this.sessions.end(client, userId, sessionId, input);
+  if (ended === undefined) throw new ApiError('session.not_found');
+  if (input.outcome === 'done') {
+    await this.steps.update(client, userId, ended.step.id, { done: true });
+  }
+  return ended;
+});
+```
+
+| Outcome | The session | The step |
+|---|---|---|
+| `done` | ended | marked done, at the same instant |
+| `progress`, `stuck`, `distracted`, `tired` | ended | left as it is |
+
+Either the session ends and the step is done, or neither happens. That is what the transaction is for: there is no moment where the session says "done" and the step does not.
+
+The step is marked with the same statement `PATCH /steps/:id` uses. So the rule from week 4 holds here too: a step that was already ticked while the session ran keeps its first time.
+
+The task is never mentioned. Its status is read from its steps, so ending the session on a task's last open step makes the task `done`, with no code written for it.
+
+**3. Why the id is in the path**
+
+A user has one running session at most, so `POST /sessions/active/end` would have been enough to find it. But think of a tab left open since yesterday, still showing yesterday's timer. Pressing "End" there would end *today's* session. With the id in the path, a tab can only end the session it was showing, and for yesterday's that is a `404`.
+
+**4. The time is the server's, again**
+
+`ended_at` is `now()` in the database, as `started_at` was. An `endedAt` in the body is refused with `400`. Focus minutes are the difference of the two, so neither can come from the client.
+
+**5. No goal lock this time**
+
+Marking a step done is a write under a goal, and every such write so far locks the goal first, to be sure it is not archived. Ending a session does not need to. Step 1 decided that a goal cannot be archived while a session runs under it, and this session runs until this transaction commits. "Archived means read-only" holds with no extra lock and no exception.
+
+**6. The database rule** (`migrations/0010_review-only-on-ended-session.sql`)
+
+```sql
+ALTER TABLE sessions
+  ADD CONSTRAINT sessions_review_only_when_ended
+    CHECK (
+      ended_at IS NOT NULL
+      OR (outcome IS NULL AND note IS NULL AND rating IS NULL)
+    );
+```
+
+A review is what you say about a session once it is over. A row that is still running and already has an outcome is a contradiction. The API cannot write one, because the end and the review are one `UPDATE`. The constraint says the same in the database, where it also holds for a row changed by hand.
+
+*Why only this direction?* "An ended session always has a review" is true of every session the API ends, but it is not a constraint. It would forbid closing a session without a review, and two cases may one day want exactly that: a session left running overnight, and one started by mistake. Both are open questions (`PROJECT.md` §12).
+
+**7. What is not built**
+
+- **Changing a review.** It is a record of how the session felt when it ended.
+- **Discarding a session** that was started by mistake. Today it can only be ended, with a review.
+- **Anything about a forgotten session.** One left running overnight counts all its hours when it is finally ended. This matters for the progress page and is decided there.
+
+**8. The tests** (`test/sessions.e2e-spec.ts`, under `ending a session`)
+
+The tests from step 1 that needed a session to be over now end it through this route, not with SQL.
+
+| Rule (from the issue's *Done when*) | Test |
+|---|---|
+| End with `done` marks the step done | `marks the step done, at the moment the session ended` |
+| If it was the last step, the task is `done` | `moves the task to in_progress, and to done with its last step` |
+| Ending an already-ended session is `404` | `answers 404 for a session that has already ended, and keeps its review` |
+| Ending without outcome or rating is `400` | `refuses to end with a missing outcome…`, `…a missing rating…` |
+
+And the rest:
+
+| Rule | Test |
+|---|---|
+| The answer is the session plus its end and review | `ends it with its review and answers with it` |
+| An ended session is not the running one; the next can start | `is no longer the running session, and the next one can start` |
+| The other four outcomes leave the step alone | `leaves the step not done with outcome …` (four tests) |
+| A step ticked during the session keeps its time | `keeps the time of a step ticked while the session ran` |
+| No note is `null` | `saves no note as null, left out or sent as null` |
+| A double click ends once | `lets one of two ends at the same moment through` |
+| Someone else's session looks like no session | `answers 404 for another user's session, exactly like no session at all` |
+| An ended session is still work history | `leaves the step impossible to delete` |
+| Bad bodies | twelve cases; each names its field, and the session is still running afterwards |
+| `400` malformed id, `401` no login | one test each |
+| The constraint itself | `rejects a review on a session that is still running` (schema) |
+| The Swagger examples work as they are | `accepts every request example exactly as Swagger pre-fills it` |
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0010_review-only-on-ended-session` is applied, and all 379 tests pass.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running). In Apidog, import `http://localhost:3001/api/docs-json` again first, so the new route appears under **sessions**.
+
+You need a task with two steps that are not done. **GET /tasks/{taskId}/steps** shows them; add some with **POST /tasks/{taskId}/steps** if needed.
+
+1. **POST /sessions** with the first step's id → `201`. Copy the session's `id`.
+2. **POST /sessions/{id}/end** → paste the session id, change `rating` to `9` → `400`: `{ "field": "rating", "code": "max" }`. **GET /sessions/active** → `200`: a refused review ends nothing.
+3. **POST /sessions/{id}/end** with `"endedAt": "2020-01-01T00:00:00.000Z"` added to the body → `400`: `{ "field": "endedAt", "code": "whitelistValidation" }`. The time is the server's.
+4. **POST /sessions/{id}/end** → *Execute* with the body exactly as pre-filled (`done`, `4`, a note) → `200`. The answer has `endedAt` and the review.
+5. **GET /tasks/{taskId}/steps** → the first step's `doneAt` is the session's `endedAt`, to the millisecond. **GET /goals/{goalId}/tasks** → the task is `"in_progress"`. Nobody ticked the step.
+6. **GET /sessions/active** → `404` with `"code": "session.none_active"`.
+7. *Execute* the same **POST /sessions/{id}/end** again → `404` with `"code": "session.not_found"`. A double click ends once.
+8. **POST /sessions** with the first step's id again → `409` with `"code": "session.step_done"`.
+9. **POST /sessions** with the second step's id → `201`. End it with `{ "outcome": "stuck", "rating": 2 }` → `200`, with `"note": null`. **GET /tasks/{taskId}/steps** → the second step is still not done.
+10. **POST /sessions** with the second step's id once more, and end it as pre-filled (`done`). **GET /goals/{goalId}/tasks** → the task is `"done"`, if those were its only two open steps.
+11. In pgAdmin (<http://localhost:5050>):
+
+    ```sql
+    SELECT started_at, ended_at, outcome, rating, note FROM sessions ORDER BY started_at;
+    ```
+
+    Three rows: `done`, `stuck`, `done`. The step that took two sessions shows it.
+12. The database rule. **PATCH /steps/{id}** one step back to `{ "done": false }` and **POST /sessions** on it. Then in pgAdmin:
+
+    ```sql
+    UPDATE sessions SET outcome = 'done' WHERE ended_at IS NULL;
+    ```
+
+    → `ERROR: … violates check constraint "sessions_review_only_when_ended"`. Then end the session through the API.
+13. **POST /goals/{id}/archive** → `200`, now that nothing is running. **DELETE /goals/{id}** → `409` with `"code": "goal.has_work_history"`: the sessions are proof of work, and they stay. Then **POST /goals/{id}/unarchive**.
+
+---
+
+## Step 3 — Stop the clock, review later
+
+### Why
+
+On 2026-10-10 four rules were added to `PROJECT.md` §6.3:
+
+1. **Nothing closes a session automatically.** Leave the app, and the clock keeps running until you come back.
+2. **The review may be postponed**, but the session stays open until it is written. No new session starts while one is open or awaiting its review.
+3. **No ending without a review.** Outcome and rating are required; the note is optional.
+4. **No cancelling.** A session started by mistake is ended like any other, with its review.
+
+Rules 1, 3 and 4 were already true of steps 1 and 2: the backend never closes a session, `POST /sessions/:id/end` is the only way to end one and it requires the review, and there is no cancel or delete route. Rule 2 needed a decision: when the review is postponed, does the clock keep running?
+
+**It stops.** Focus minutes are `ended_at − started_at`, and they are the progress page's first number. Someone who stops working at six and writes the review at ten should not have four extra hours. So a session gets a third state, between running and completed: *awaiting review*. The clock has stopped, the review is still owed, and until it is written the session is still the open one.
+
+| State | `ended_at` | `outcome`, `rating` | Blocks a new start and the goal's archive |
+|---|---|---|---|
+| running: the clock counts | empty | empty | yes |
+| awaiting review: "Later" was pressed | set | empty | yes |
+| completed: reviewed | set | set | no |
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0011_session-awaiting-review.sql` | Database | "One active session" now means one *unreviewed* session; a review is whole |
+| `src/sessions/dto/session.dto.ts` | Boundary | `endedAt` on the active session: null while the clock runs |
+| `src/sessions/sessions.repository.ts` | Repository | `stop`; `end` accepts a stopped session; `markStepDone` at the session's end time |
+| `src/sessions/sessions.service.ts` | Service | `stop`; `end` marks the step as of the end time |
+| `src/sessions/sessions.controller.ts` | Controller | `POST /api/sessions/:id/stop` |
+| `src/goals/goals.repository.ts`, `goals.service.ts` | Repository, Service | The archive waits for the review, not only for the clock |
+| `src/common/api-error.ts` | Rule | `session.not_running`; four sentences reworded, codes unchanged |
+| `test/sessions.e2e-spec.ts` | Test | 8 new tests, 70 in the file |
+| `test/schema.e2e-spec.ts` | Test | The new index predicate and the new check |
+| `test/goals.e2e-spec.ts` | Test | Its "work history" is now a completed session |
+| `test/api-docs.e2e-spec.ts` | Test | Knows the new path |
+
+### How it works
+
+**The route**
+
+| Request | Answer |
+|---|---|
+| `POST /api/sessions/:id/stop` | `200`, the session with `endedAt` set, awaiting its review |
+
+And two routes from steps 1 and 2 change their meaning a little:
+
+| Request | Now |
+|---|---|
+| `GET /api/sessions/active` | The open session, running (`endedAt` null) or awaiting review (`endedAt` set). That one field tells the frontend which screen to draw after a reload: the timer, or the review form |
+| `POST /api/sessions/:id/end` | Completes a running session *or* a stopped one. A stopped one keeps the time its clock stopped |
+
+| Problem | Status | Code |
+|---|---|---|
+| Stopping a session that is not running: there is none, it belongs to someone else, or its clock has already stopped | `404` | `session.not_running` |
+| Ending a session that is not open: none, someone else's, or already reviewed | `404` | `session.not_found` |
+| Starting while a session is open, running or awaiting review | `409` | `session.already_active` |
+| Archiving the goal while a session under it is open | `409` | `goal.session_running` |
+
+The codes are the ones from steps 1 and 2; a code is never renamed. Their sentences now say "open" and "not finished" instead of "running".
+
+**1. "Active" now means "not yet reviewed"** (`migrations/0011_session-awaiting-review.sql`)
+
+```sql
+DROP INDEX one_active_session_per_user;
+CREATE UNIQUE INDEX one_active_session_per_user
+  ON sessions(user_id)
+  WHERE outcome IS NULL;
+```
+
+Week 1's index covered `ended_at IS NULL`. With that predicate, stopping the clock would have let a new session start with the review still owed, against rule 2. Now the index covers every session without an outcome: running, or stopped and waiting. The name is the same, so the code that catches the refusal (`ONE_ACTIVE_SESSION`, step 1) did not change.
+
+Tried against PostgreSQL 16 before writing the migration: a stopped session makes a second insert fail on the index, a reviewed one lets it through.
+
+**2. Stop: one statement, like end** (`SessionsRepository.stop`)
+
+```sql
+UPDATE sessions SET ended_at = now()
+ WHERE sessions.id = $2 AND sessions.user_id = $1 AND sessions.ended_at IS NULL
+```
+
+No row: nothing was running under that id for you, `404`. A double click on "Later" is caught the same way as a double click on "End" in step 2: the question is inside the statement, and the second request finds nothing to stop.
+
+**3. End accepts a stopped session and keeps its time** (`SessionsRepository.end`)
+
+```sql
+SET ended_at = COALESCE(sessions.ended_at, now()), outcome = $3, rating = $4, note = $5
+WHERE … AND sessions.outcome IS NULL
+```
+
+Two small changes to step 2's statement. `COALESCE`: a running session ends now, a stopped one keeps the time its clock stopped. `outcome IS NULL` instead of `ended_at IS NULL`: a stopped session is still there to be reviewed; a reviewed one is not. The frontend has one review form and one call, however the session got there.
+
+*Why not a separate `/review` route for stopped sessions?* The review screen would have had two ways to send the same body, and a reason to pick the wrong one.
+
+**4. The step is done when the clock stopped** (`SessionsRepository.markStepDone`)
+
+```sql
+UPDATE steps SET done_at = COALESCE(steps.done_at, sessions.ended_at)
+  FROM sessions
+ WHERE sessions.id = $2 AND sessions.user_id = $1
+   AND steps.id = sessions.step_id AND steps.user_id = $1
+```
+
+Step 2 marked the step with `now()`. With a postponed review that would be the time of the form, perhaps the next morning, and the step would land on the wrong day of the progress page. The time is read from the session row itself, so the two are the same instant to the microsecond. `COALESCE` keeps an earlier time, as everywhere: a step ticked while the session ran stays on that time.
+
+**5. A review is whole** (`migrations/0011`)
+
+```sql
+ALTER TABLE sessions ADD CONSTRAINT sessions_review_complete
+  CHECK ((outcome IS NULL) = (rating IS NULL));
+```
+
+With three states, a row must be in exactly one of them. A session with an outcome and no rating would be neither awaiting review nor completed. The API never writes one, because the review is one `UPDATE`; the constraint says the same in the database, where it also holds for a row changed by hand. Step 2's check (a review only on an ended session) stays, and "an ended session always has a review" is still not a constraint: a stopped session is ended and unreviewed, by design now.
+
+**6. The archive waits for the review** (`GoalsRepository.hasActiveSession`)
+
+Step 1 refused the archive while a session was *running* under the goal. Now it is refused while one is *unreviewed* there, because the review is still to come and can mark the step done, which is a write under the goal. The lock and the order of the statements are as in step 1; only the predicate changed to `outcome IS NULL`.
+
+**7. The tests** (`test/sessions.e2e-spec.ts`, under `stopping the clock, review later`)
+
+| Rule | Test |
+|---|---|
+| Stop sets `endedAt`, writes no review, and the session stays the active one | `stops the clock and keeps the session open, awaiting its review` |
+| A stopped session blocks a new start and the archive | `still blocks a new start and the archive of its goal` |
+| The review keeps the stop time; afterwards a new session can start | `is completed by the review, keeping the time the clock stopped` |
+| The step is done at the stop time, not the review time | `marks the step done at the time the clock stopped, not at the review` |
+| Stop twice, or after the review | `answers 404 once the clock has stopped, and after the review` |
+| A double click on "Later" | `lets one of two stops at the same moment through` |
+| Someone else's session looks like no session | `answers 404 for another user's session, exactly like no session at all` |
+| `400` malformed id, `401` no login | one test, and `needs a login on every endpoint` |
+| The index and the check themselves | `rejects a new session while the previous one is stopped but not reviewed`, `rejects a review with only an outcome, or only a rating` (schema) |
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0011_session-awaiting-review` is applied, and all 389 tests pass.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running). In Apidog, import `http://localhost:3001/api/docs-json` again first, so the new route appears under **sessions**.
+
+You need a task with two steps that are not done.
+
+1. **POST /sessions** with the first step's id → `201`, with `"endedAt": null`: the clock runs. Copy the session's `id`.
+2. **POST /sessions/{id}/stop** → `200`, the same session with `endedAt` set. This is "Later" on the review screen.
+3. **GET /sessions/active** → `200`, still this session, `endedAt` set. After a reload the frontend knows to show the review form, not the timer.
+4. **POST /sessions** with the second step's id → `409` with `"code": "session.already_active"`. The review is still owed.
+5. **POST /goals/{id}/archive** → `409` with `"code": "goal.session_running"`.
+6. **POST /sessions/{id}/stop** again → `404` with `"code": "session.not_running"`. The clock is already stopped.
+7. Wait a few seconds. **POST /sessions/{id}/end** → *Execute* as pre-filled (`done`) → `200`. Its `endedAt` is the time from step 2, not now.
+8. **GET /tasks/{taskId}/steps** → the first step's `doneAt` is that same time. The step was finished when the clock stopped, not when you wrote the review.
+9. **GET /sessions/active** → `404`. **POST /sessions/{id}/stop** and **POST /sessions/{id}/end** on this session → `404` each, `session.not_running` and `session.not_found`.
+10. **POST /sessions** with the second step's id, then **POST /sessions/{id}/end** straight away with `{ "outcome": "progress", "rating": 3 }` → `200`. No stop is needed when you review at once.
+11. **POST /goals/{id}/archive** → `200`, nothing is open. Then **POST /goals/{id}/unarchive**.
+12. In pgAdmin (<http://localhost:5050>):
+
+    ```sql
+    SELECT started_at, ended_at, outcome, rating FROM sessions ORDER BY started_at;
+    ```
+
+    Two rows. The first ended at the time of step 2, although it was reviewed later. Then:
+
+    ```sql
+    UPDATE sessions SET rating = NULL WHERE outcome IS NOT NULL;
+    ```
+
+    → `ERROR: … violates check constraint "sessions_review_complete"`. A review is whole, or it is not there yet.
+

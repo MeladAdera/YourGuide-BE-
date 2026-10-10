@@ -255,7 +255,20 @@ describe('Database schema', () => {
     });
   });
 
-  it('allows a new session after the previous one ended', async () => {
+  it('allows a new session once the previous one is reviewed', async () => {
+    const { userId, stepId } = await insertStep();
+    const first = await insertSession(userId, stepId);
+    await pool.query(
+      "UPDATE sessions SET ended_at = started_at + interval '25 minutes', outcome = 'done', rating = 4 WHERE id = $1",
+      [first],
+    );
+
+    await expect(insertSession(userId, stepId)).resolves.toBeDefined();
+  });
+
+  // The clock has stopped, but the review is still owed: the session is
+  // still the active one.
+  it('rejects a new session while the previous one is stopped but not reviewed', async () => {
     const { userId, stepId } = await insertStep();
     const first = await insertSession(userId, stepId);
     await pool.query(
@@ -263,7 +276,33 @@ describe('Database schema', () => {
       [first],
     );
 
-    await expect(insertSession(userId, stepId)).resolves.toBeDefined();
+    await expect(insertSession(userId, stepId)).rejects.toMatchObject({
+      code: UNIQUE_VIOLATION,
+      constraint: 'one_active_session_per_user',
+    });
+  });
+
+  it('rejects a review with only an outcome, or only a rating', async () => {
+    const { userId, stepId } = await insertStep();
+    const sessionId = await insertSession(userId, stepId);
+    const ended = "ended_at = started_at + interval '25 minutes'";
+
+    for (const half of ["outcome = 'done'", 'rating = 4']) {
+      await expect(
+        pool.query(`UPDATE sessions SET ${ended}, ${half} WHERE id = $1`, [
+          sessionId,
+        ]),
+      ).rejects.toMatchObject({
+        code: CHECK_VIOLATION,
+        constraint: 'sessions_review_complete',
+      });
+    }
+    await expect(
+      pool.query(
+        `UPDATE sessions SET ${ended}, outcome = 'done', rating = 4 WHERE id = $1`,
+        [sessionId],
+      ),
+    ).resolves.toBeDefined();
   });
 
   it('rejects a session that ends before it starts', async () => {
@@ -278,13 +317,42 @@ describe('Database schema', () => {
     ).rejects.toMatchObject({ code: CHECK_VIOLATION });
   });
 
+  // A review belongs to an ended session (see the test below), so these
+  // two end the session in the same statement: only the value is wrong.
   it('rejects a rating outside 1–5', async () => {
     const { userId, stepId } = await insertStep();
     const sessionId = await insertSession(userId, stepId);
 
     await expect(
-      pool.query('UPDATE sessions SET rating = 6 WHERE id = $1', [sessionId]),
-    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+      pool.query(
+        "UPDATE sessions SET ended_at = started_at + interval '25 minutes', outcome = 'done', rating = 6 WHERE id = $1",
+        [sessionId],
+      ),
+    ).rejects.toMatchObject({
+      code: CHECK_VIOLATION,
+      constraint: 'sessions_rating_check',
+    });
+  });
+
+  it('rejects a review on a session that is still running', async () => {
+    const { userId, stepId } = await insertStep();
+    const sessionId = await insertSession(userId, stepId);
+
+    for (const review of ["outcome = 'done', rating = 4", "note = 'n'"]) {
+      await expect(
+        pool.query(`UPDATE sessions SET ${review} WHERE id = $1`, [sessionId]),
+      ).rejects.toMatchObject({
+        code: CHECK_VIOLATION,
+        constraint: 'sessions_review_only_when_ended',
+      });
+    }
+    // Ended and reviewed in one statement, as the API does it, is fine.
+    await expect(
+      pool.query(
+        "UPDATE sessions SET ended_at = started_at + interval '25 minutes', outcome = 'done', rating = 4, note = 'n' WHERE id = $1",
+        [sessionId],
+      ),
+    ).resolves.toBeDefined();
   });
 
   it('rejects an unknown outcome and an unknown situation', async () => {
@@ -292,10 +360,14 @@ describe('Database schema', () => {
     const sessionId = await insertSession(userId, stepId);
 
     await expect(
-      pool.query("UPDATE sessions SET outcome = 'bored' WHERE id = $1", [
-        sessionId,
-      ]),
-    ).rejects.toMatchObject({ code: CHECK_VIOLATION });
+      pool.query(
+        "UPDATE sessions SET ended_at = started_at + interval '25 minutes', outcome = 'bored', rating = 3 WHERE id = $1",
+        [sessionId],
+      ),
+    ).rejects.toMatchObject({
+      code: CHECK_VIOLATION,
+      constraint: 'sessions_outcome_check',
+    });
     await expect(
       pool.query(
         `INSERT INTO struggles (user_id, situation, description, advice, next_step)

@@ -21,6 +21,13 @@ const GOAL = {
 };
 const TASK = { title: 'Learn PostgreSQL' };
 const STEP = { title: 'Understand SELECT' };
+/** A review with every field, as POST /sessions/:id/end takes it. */
+const REVIEW = {
+  outcome: 'progress',
+  rating: 4,
+  note: 'Wrote three SELECT queries.',
+};
+const DONE = { outcome: 'done', rating: 5 };
 const TIMESTAMP = expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) as unknown;
 const UUID = expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown;
 
@@ -32,9 +39,17 @@ interface Titled {
 interface SessionBody {
   id: string;
   startedAt: string;
+  endedAt: string | null;
   step: Titled;
   task: Titled;
   goal: Titled;
+}
+
+interface EndedBody extends SessionBody {
+  endedAt: string;
+  outcome: string;
+  rating: number;
+  note: string | null;
 }
 
 /** The ids of a goal, its one task and that task's one step. */
@@ -110,17 +125,53 @@ describe('sessions', () => {
     return call('get', '/sessions/active', { as });
   }
 
+  /** Starts a session on the step and returns it. */
+  async function started(step = stepId): Promise<SessionBody> {
+    return (await start({ stepId: step })).body as SessionBody;
+  }
+
   /**
-   * Ends the user's running session by hand. The API for it is the next
-   * step (POST /sessions/:id/end); the rules here only need the row to be
-   * ended.
+   * POST /sessions/:id/end. `body` is unknown so that bad bodies can be
+   * sent.
    */
+  function end(
+    sessionId: string,
+    body: unknown = REVIEW,
+    as: string | null = cookie,
+  ): Promise<Response> {
+    return call('post', `/sessions/${sessionId}/end`, {
+      body: body as object,
+      as,
+    });
+  }
+
+  /** POST /sessions/:id/stop: the clock stops, the review is still owed. */
+  function stop(
+    sessionId: string,
+    as: string | null = cookie,
+  ): Promise<Response> {
+    return call('post', `/sessions/${sessionId}/stop`, { as });
+  }
+
+  /** Ends the user's active session, with any review. */
   async function endSession(): Promise<void> {
-    await pool.query(
-      `UPDATE sessions SET ended_at = started_at + interval '25 minutes'
-        WHERE user_id = $1 AND ended_at IS NULL`,
-      [userId],
-    );
+    await end(((await active()).body as SessionBody).id);
+  }
+
+  /** When the step was marked done, as the API shows it. */
+  async function doneAt(step = stepId): Promise<string | null | undefined> {
+    const response = await call('get', `/tasks/${taskId}/steps`);
+    return (response.body as { id: string; doneAt: string | null }[]).find(
+      (item) => item.id === step,
+    )?.doneAt;
+  }
+
+  /** The status the API gives the task, read from its steps. */
+  async function taskStatus(): Promise<string | undefined> {
+    const response = await call('get', `/goals/${goalId}/tasks`);
+    return (response.body as { id: string; status: string }[]).find(
+      (item) => item.id === taskId,
+    )?.status;
   }
 
   async function archivedAt(goal = goalId): Promise<Date | null | undefined> {
@@ -202,6 +253,7 @@ describe('sessions', () => {
     expect(started.body).toEqual({
       id: UUID,
       startedAt: TIMESTAMP,
+      endedAt: null,
       step: { id: stepId, title: STEP.title },
       task: { id: taskId, title: TASK.title },
       goal: { id: goalId, title: GOAL.title },
@@ -248,7 +300,7 @@ describe('sessions', () => {
       statusCode: 404,
       error: 'Not Found',
       code: 'session.none_active',
-      message: 'No focus session is running.',
+      message: 'No focus session is open.',
     });
   });
 
@@ -309,7 +361,7 @@ describe('sessions', () => {
         statusCode: 409,
         error: 'Conflict',
         code: 'session.already_active',
-        message: 'A focus session is already running. End it first.',
+        message: 'A focus session is still open. End it first.',
       });
       expect(otherStep.status).toBe(409);
       expect(otherStep.body).toMatchObject({ code: 'session.already_active' });
@@ -526,7 +578,8 @@ describe('sessions', () => {
         statusCode: 409,
         error: 'Conflict',
         code: 'goal.session_running',
-        message: 'A focus session is running under this goal. End it first.',
+        message:
+          'A focus session under this goal is not finished. End it first.',
       });
       expect(await archivedAt()).toBeNull();
       expect((await active()).status).toBe(200);
@@ -593,10 +646,366 @@ describe('sessions', () => {
     });
   });
 
-  it('needs a login on both endpoints', async () => {
-    expect((await start({ stepId }, null)).status).toBe(401);
-    expect((await active(null)).status).toBe(401);
-    expect(await count('sessions')).toBe(0);
+  describe('ending a session', () => {
+    it('ends it with its review and answers with it', async () => {
+      const session = await started();
+
+      const ended = await end(session.id);
+
+      expect(ended.status).toBe(200);
+      // The running session's fields, and the end with its review.
+      expect(ended.body).toEqual({
+        ...session,
+        endedAt: TIMESTAMP,
+        ...REVIEW,
+      });
+      const body = ended.body as EndedBody;
+      expect(Date.parse(body.endedAt)).toBeGreaterThan(
+        Date.parse(body.startedAt),
+      );
+      const { rows } = await pool.query(
+        'SELECT ended_at, outcome, rating, note FROM sessions',
+      );
+      expect(rows).toEqual([{ ended_at: new Date(body.endedAt), ...REVIEW }]);
+    });
+
+    it('is no longer the running session, and the next one can start', async () => {
+      const session = await started();
+
+      await end(session.id);
+
+      expect((await active()).status).toBe(404);
+      expect((await start()).status).toBe(201);
+      expect(await count('sessions')).toBe(2);
+    });
+
+    describe('with outcome done', () => {
+      it('marks the step done, at the moment the session ended', async () => {
+        const session = await started();
+
+        const ended = await end(session.id, DONE);
+
+        expect(ended.status).toBe(200);
+        expect(await doneAt()).toBe((ended.body as EndedBody).endedAt);
+      });
+
+      it('moves the task to in_progress, and to done with its last step', async () => {
+        const second = await created(
+          `/tasks/${taskId}/steps`,
+          { title: 'Practice WHERE' },
+          cookie,
+        );
+        expect(await taskStatus()).toBe('todo');
+
+        await end((await started()).id, DONE);
+        expect(await taskStatus()).toBe('in_progress');
+
+        await end((await started(second)).id, DONE);
+        expect(await taskStatus()).toBe('done');
+      });
+
+      it('keeps the time of a step ticked while the session ran', async () => {
+        const session = await started();
+        const ticked = await call('patch', `/steps/${stepId}`, {
+          body: { done: true },
+        });
+        const tickedAt = (ticked.body as { doneAt: string }).doneAt;
+
+        const ended = await end(session.id, DONE);
+
+        expect(ended.status).toBe(200);
+        expect(await doneAt()).toBe(tickedAt);
+      });
+    });
+
+    it.each(['progress', 'stuck', 'distracted', 'tired'])(
+      'leaves the step not done with outcome %s',
+      async (outcome) => {
+        const session = await started();
+
+        const ended = await end(session.id, { outcome, rating: 2 });
+
+        expect(ended.status).toBe(200);
+        expect((ended.body as EndedBody).outcome).toBe(outcome);
+        expect(await doneAt()).toBeNull();
+        expect(await taskStatus()).toBe('todo');
+      },
+    );
+
+    it('saves no note as null, left out or sent as null', async () => {
+      const leftOut = await end((await started()).id, {
+        outcome: 'tired',
+        rating: 3,
+      });
+      const sentNull = await end((await started()).id, {
+        outcome: 'tired',
+        rating: 3,
+        note: null,
+      });
+
+      expect(leftOut.status).toBe(200);
+      expect((leftOut.body as EndedBody).note).toBeNull();
+      expect(sentNull.status).toBe(200);
+      expect((sentNull.body as EndedBody).note).toBeNull();
+    });
+
+    it('answers 404 for a session that has already ended, and keeps its review', async () => {
+      const session = await started();
+      const first = await end(session.id, {
+        outcome: 'stuck',
+        rating: 2,
+        note: 'First',
+      });
+
+      const again = await end(session.id, { ...DONE, note: 'Second' });
+
+      expect(again.status).toBe(404);
+      expect(again.body).toEqual({
+        statusCode: 404,
+        error: 'Not Found',
+        code: 'session.not_found',
+        message: 'Session not found, or it has already been reviewed.',
+      });
+      // The first review stands, and the refused `done` marked nothing.
+      const { rows } = await pool.query(
+        'SELECT ended_at, outcome, rating, note FROM sessions',
+      );
+      expect(rows).toEqual([
+        {
+          ended_at: new Date((first.body as EndedBody).endedAt),
+          outcome: 'stuck',
+          rating: 2,
+          note: 'First',
+        },
+      ]);
+      expect(await doneAt()).toBeNull();
+    });
+
+    // A double click on "End". "Is it still running?" is part of the
+    // UPDATE, so the second one finds nothing left to end.
+    it('lets one of two ends at the same moment through', async () => {
+      const session = await started();
+
+      const responses = await Promise.all([end(session.id), end(session.id)]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        200, 404,
+      ]);
+    });
+
+    it("answers 404 for another user's session, exactly like no session at all", async () => {
+      const session = await started();
+      const other = await register('other@example.com');
+
+      const theirs = await end(session.id, DONE, other.cookie);
+      const missing = await end(randomUUID(), DONE, other.cookie);
+
+      expect(theirs.status).toBe(404);
+      expect(theirs.body).toMatchObject({ code: 'session.not_found' });
+      expect(missing.status).toBe(404);
+      expect(missing.body).toEqual(theirs.body);
+      // Nothing the other user tried changed anything.
+      expect((await active()).body).toEqual(session);
+      expect(await doneAt()).toBeNull();
+    });
+
+    it('answers 400 for an id that is not a UUID', async () => {
+      const response = await end('not-a-uuid');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ code: 'bad_request' });
+    });
+
+    // An ended session is work history as much as a running one.
+    it('leaves the step impossible to delete', async () => {
+      await end((await started()).id);
+
+      const refused = await call('delete', `/steps/${stepId}`);
+
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({ code: 'step.has_work_history' });
+    });
+
+    it.each<[string, object, string]>([
+      ['a missing outcome', { rating: 4 }, 'outcome'],
+      ['a missing rating', { outcome: 'done' }, 'rating'],
+      ['an unknown outcome', { ...REVIEW, outcome: 'bored' }, 'outcome'],
+      ['null for the outcome', { ...REVIEW, outcome: null }, 'outcome'],
+      ['a rating of 0', { ...REVIEW, rating: 0 }, 'rating'],
+      ['a rating of 6', { ...REVIEW, rating: 6 }, 'rating'],
+      [
+        'a rating that is not a whole number',
+        { ...REVIEW, rating: 2.5 },
+        'rating',
+      ],
+      ['a rating sent as text', { ...REVIEW, rating: '4' }, 'rating'],
+      ['an empty note', { ...REVIEW, note: '' }, 'note'],
+      [
+        'a note longer than 1000 characters',
+        { ...REVIEW, note: 'a'.repeat(1001) },
+        'note',
+      ],
+      ['a note that is not text', { ...REVIEW, note: 42 }, 'note'],
+      // The time is the server's. It cannot be sent.
+      [
+        'an endedAt',
+        { ...REVIEW, endedAt: '2020-01-01T00:00:00.000Z' },
+        'endedAt',
+      ],
+    ])(
+      'refuses to end with %s: 400, still running',
+      async (_name, body, field) => {
+        const session = await started();
+
+        const response = await end(session.id, body);
+
+        expect(response.status).toBe(400);
+        expect(response.body).toMatchObject({ code: 'validation.failed' });
+        const { errors } = response.body as { errors: { field: string }[] };
+        expect([...new Set(errors.map((error) => error.field))]).toEqual([
+          field,
+        ]);
+        expect((await active()).body).toEqual(session);
+        expect(await doneAt()).toBeNull();
+      },
+    );
+  });
+
+  describe('stopping the clock, review later', () => {
+    it('stops the clock and keeps the session open, awaiting its review', async () => {
+      const session = await started();
+
+      const stopped = await stop(session.id);
+
+      expect(stopped.status).toBe(200);
+      expect(stopped.body).toEqual({ ...session, endedAt: TIMESTAMP });
+      // Still the active session, now with its end and no review.
+      expect((await active()).body).toEqual(stopped.body);
+      const { rows } = await pool.query(
+        'SELECT ended_at, outcome, rating, note FROM sessions',
+      );
+      expect(rows).toEqual([
+        {
+          ended_at: new Date((stopped.body as SessionBody).endedAt ?? ''),
+          outcome: null,
+          rating: null,
+          note: null,
+        },
+      ]);
+    });
+
+    it('still blocks a new start and the archive of its goal', async () => {
+      const session = await started();
+      await stop(session.id);
+      const another = await created(
+        `/tasks/${taskId}/steps`,
+        { title: 'Practice WHERE' },
+        cookie,
+      );
+
+      const refusedStart = await start({ stepId: another });
+      const refusedArchive = await call('post', `/goals/${goalId}/archive`);
+
+      expect(refusedStart.status).toBe(409);
+      expect(refusedStart.body).toMatchObject({
+        code: 'session.already_active',
+      });
+      expect(refusedArchive.status).toBe(409);
+      expect(refusedArchive.body).toMatchObject({
+        code: 'goal.session_running',
+      });
+      expect(await archivedAt()).toBeNull();
+      expect(await count('sessions')).toBe(1);
+    });
+
+    it('is completed by the review, keeping the time the clock stopped', async () => {
+      const session = await started();
+      const stopped = (await stop(session.id)).body as SessionBody;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const ended = await end(session.id);
+
+      expect(ended.status).toBe(200);
+      // The same endedAt as the stop: the review did not move it.
+      expect(ended.body).toEqual({ ...stopped, ...REVIEW });
+      expect((await active()).status).toBe(404);
+      expect((await start()).status).toBe(201);
+      expect((await call('post', `/goals/${goalId}/archive`)).status).toBe(409);
+    });
+
+    it('marks the step done at the time the clock stopped, not at the review', async () => {
+      const session = await started();
+      const stopped = (await stop(session.id)).body as SessionBody;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const ended = await end(session.id, DONE);
+
+      expect(ended.status).toBe(200);
+      expect(await doneAt()).toBe(stopped.endedAt);
+      expect(await taskStatus()).toBe('done');
+    });
+
+    it('answers 404 once the clock has stopped, and after the review', async () => {
+      const session = await started();
+      await stop(session.id);
+
+      const again = await stop(session.id);
+
+      expect(again.status).toBe(404);
+      expect(again.body).toEqual({
+        statusCode: 404,
+        error: 'Not Found',
+        code: 'session.not_running',
+        message: 'Session not found, or it is not running.',
+      });
+      await end(session.id);
+      expect((await stop(session.id)).status).toBe(404);
+    });
+
+    // A double click on "Later".
+    it('lets one of two stops at the same moment through', async () => {
+      const session = await started();
+
+      const responses = await Promise.all([stop(session.id), stop(session.id)]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        200, 404,
+      ]);
+    });
+
+    it("answers 404 for another user's session, exactly like no session at all", async () => {
+      const session = await started();
+      const other = await register('other@example.com');
+
+      const theirs = await stop(session.id, other.cookie);
+      const missing = await stop(randomUUID(), other.cookie);
+
+      expect(theirs.status).toBe(404);
+      expect(theirs.body).toMatchObject({ code: 'session.not_running' });
+      expect(missing.status).toBe(404);
+      expect(missing.body).toEqual(theirs.body);
+      // Still running for its owner.
+      expect((await active()).body).toEqual(session);
+    });
+
+    it('answers 400 for an id that is not a UUID', async () => {
+      const response = await stop('not-a-uuid');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ code: 'bad_request' });
+    });
+  });
+
+  it('needs a login on every endpoint', async () => {
+    const session = await started();
+    const as = null;
+
+    expect((await start({ stepId }, as)).status).toBe(401);
+    expect((await active(as)).status).toBe(401);
+    expect((await stop(session.id, as)).status).toBe(401);
+    expect((await end(session.id, REVIEW, as)).status).toBe(401);
+    expect((await active()).body).toEqual(session);
+    expect(await count('sessions')).toBe(1);
   });
 
   it.each<[string, (step: string) => unknown, object]>([

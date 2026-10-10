@@ -96,10 +96,11 @@ export class GoalsRepository {
   }
 
   /**
-   * True when a focus session is running on one of this goal's steps. The
-   * goal is not read here: the caller holds it (`lock`).
+   * True when a focus session on one of this goal's steps is still active:
+   * running, or stopped and awaiting its review. The goal is not read
+   * here: the caller holds it (`lock`).
    */
-  async hasRunningSession(
+  async hasActiveSession(
     executor: Executor,
     userId: string,
     goalId: string,
@@ -108,7 +109,7 @@ export class GoalsRepository {
       `SELECT 1 FROM sessions
          JOIN steps ON steps.id = sessions.step_id
          JOIN tasks ON tasks.id = steps.task_id
-        WHERE sessions.user_id = $1 AND sessions.ended_at IS NULL
+        WHERE sessions.user_id = $1 AND sessions.outcome IS NULL
           AND tasks.goal_id = $2`,
       [userId, goalId],
     );
