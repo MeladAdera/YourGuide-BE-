@@ -57,6 +57,7 @@ describe('API docs', () => {
       '/api/profile/sections/self-view',
       '/api/profile/sections/situation',
       '/api/profile/sections/values',
+      '/api/progress',
       '/api/sessions',
       '/api/sessions/active',
       '/api/sessions/{id}/end',

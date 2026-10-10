@@ -9,6 +9,7 @@ Two different things are called "session" in this project. The login session is 
 | 1 | [Start a session](#step-1--start-a-session) | YOU-22 | Done |
 | 2 | [End a session with its review](#step-2--end-a-session-with-its-review) | YOU-23 | Done |
 | 3 | [Stop the clock, review later](#step-3--stop-the-clock-review-later) | YOU-23 | Done |
+| 4 | [Progress per day](#step-4--progress-per-day) | YOU-24 | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -652,4 +653,164 @@ You need a task with two steps that are not done.
     ```
 
     → `ERROR: … violates check constraint "sessions_review_complete"`. A review is whole, or it is not there yet.
+
+---
+
+## Step 4 — Progress per day
+
+### Why
+
+This is the number the app exists to show. Everything since week 3 was built so that one answer can say "you are moving": the sessions for the minutes, `done_at` on the steps for the steps finished, the struggles for the times you were about to stop and did not. `PROJECT.md` §6.7 calls the last one the most important number in the app.
+
+Three reasons it is built now:
+
+- **It closes the week.** Sessions start and end; this is what they add up to.
+- **It is what `users.timezone` is for.** Progress is per day, and the day must be the user's day. A session at 01:30 in Dubai is 21:30 the day before in UTC, and on a chart grouped by UTC it would sit on the wrong bar. The timezone was asked for at registration (week 2) for exactly this query.
+- **The AI advice (week 6) reads it.** "My recent progress, last 7 days" goes into every prompt. That is this same call.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `src/progress/dto/progress.query.ts` | Boundary | `days`: 1 to 90, default 7 |
+| `src/progress/dto/progress.dto.ts` | Boundary | The answer: days and totals |
+| `src/progress/progress.repository.ts` | Repository | One statement |
+| `src/progress/progress.service.ts` | Service | The totals, added up from the days |
+| `src/progress/progress.controller.ts` | Controller | `GET /api/progress` |
+| `src/progress/progress.module.ts` | Module | Registered in `app.module.ts`; imports nothing |
+| `test/progress.e2e-spec.ts` | Test | 22 e2e tests |
+| `test/api-docs.e2e-spec.ts` | Test | Knows the new path |
+
+No migration, and no new table: progress is read from what is already there.
+
+### How it works
+
+**The route**
+
+```
+GET /api/progress?days=7
+```
+
+answers `200`:
+
+```
+{ "days": [
+    { "date": "2026-10-04", "focusMinutes": 50, "stepsDone": 2, "struggledAndContinued": 1 },
+    …
+    { "date": "2026-10-10", "focusMinutes": 0, "stepsDone": 0, "struggledAndContinued": 0 } ],
+  "totals": { "focusMinutes": 310, "stepsDone": 9, "struggledAndContinued": 4 } }
+```
+
+| Field | Meaning |
+|---|---|
+| `date` | A day in your timezone, `YYYY-MM-DD`. Oldest first, today last, every day present |
+| `focusMinutes` | Minutes of the sessions that started on this day and have ended, rounded |
+| `stepsDone` | Steps marked done on this day |
+| `struggledAndContinued` | Times you said "I'm struggling" on this day and then continued |
+| `totals` | The same three, added up over the days |
+
+| Problem | Status | Code |
+|---|---|---|
+| No cookie, or the login is gone | `401` | `auth.not_logged_in` |
+| `days` is not a whole number from 1 to 90, or an unknown query field | `400` | `validation.failed` |
+
+**1. One statement** (`ProgressRepository.lastDays`)
+
+Five parts, each a named piece (`WITH … AS`) of one query:
+
+| Part | What it is |
+|---|---|
+| `me` | Your timezone, and the first day of the window: today in that timezone, minus `days − 1` |
+| `since` | The first instant of that day, as an instant: `first_day::timestamp AT TIME ZONE timezone` |
+| `day` | One row per day from the first day to today, from `generate_series` |
+| `focus`, `done`, `continued` | Each table's rows since `since`, grouped by their local date |
+
+Then `day` is joined to the three counts with `LEFT JOIN`, so a day with nothing keeps its row and `COALESCE` turns the missing count into 0.
+
+**2. The user's day** 
+
+```sql
+(started_at AT TIME ZONE me.timezone)::date
+```
+
+`AT TIME ZONE` turns an instant into the wall-clock time of that zone; `::date` keeps the date. The same is done for `done_at` and for a struggle's `created_at`. Tried against PostgreSQL before writing it: `2026-10-05 21:30+00` is `2026-10-06` in `Asia/Dubai`. The test `puts the same instant on different days for users in different timezones` registers a second user in UTC, gives both the same session, and gets different days.
+
+**3. Minutes**
+
+A session counts on the day it started, all of it, even past midnight. Its minutes are `ended_at − started_at`, so:
+
+| Session | Counts |
+|---|---|
+| Completed | yes |
+| Stopped, awaiting its review | yes: its clock has stopped |
+| Running | nothing yet |
+| Under an archived goal | yes: archiving puts a goal away, it does not erase the work |
+
+The seconds of a day are added up first and rounded once. Three sessions of 10:20 would each lose 20 seconds if rounded one by one; together they make 31 minutes, which is what happened.
+
+**4. Zeros where nothing happened**
+
+`generate_series(first_day, today, interval '1 day')` makes one row per day whether or not anything is in the tables. A chart needs an even axis, and "nothing on Tuesday" is something the page should be able to show.
+
+**5. Only the window is read**
+
+Every count has `… >= since.at`, the first instant of the first day. The `(user_id, started_at)` index from week 1 then finds the rows directly, so the query costs the same after years of sessions as on the first day.
+
+**6. `days`, and why the date is text**
+
+Query values are always text, so `days` is checked as text: one or two digits, 1 to 90 (`matches`). Left out means 7. And the date comes back as `to_char(day, 'YYYY-MM-DD')`, not as a `date` column: the `pg` driver would turn a `date` into a JavaScript `Date` at the server's local midnight, and the day could shift on the way to the client.
+
+**7. The totals are the days added up** (`ProgressService.lastDays`)
+
+Not a second query. The days are the one source of truth, and a sum in code cannot disagree with them.
+
+**8. The tests** (`test/progress.e2e-spec.ts`)
+
+Sessions and struggles are written straight into the tables, so their times can be chosen (a struggle has no API until week 6). Steps are marked done through the API where the day is today, and by SQL for other days.
+
+| Rule (from the issue's *Done when*) | Test |
+|---|---|
+| A session at 01:30 in Dubai counts on the Dubai day | `counts a session at 01:30 in Dubai on the Dubai day, not the UTC day` |
+| A running session adds 0 | `adds nothing for a session that is still running` |
+| Archiving changes nothing | `does not change when the goal is archived` |
+
+And the rest:
+
+| Rule | Test |
+|---|---|
+| Seven days of zeros, oldest first, today last | `answers seven days of zeros, oldest first, today last` |
+| The same instant lands on different days for a UTC user | `puts the same instant on different days for users in different timezones` |
+| A stopped session counts | `counts a stopped session that is awaiting its review` |
+| A session across midnight is on its first day | `counts a session on the day it started, all of it, across midnight` |
+| Rounding once per day | `adds the seconds of a day up before rounding to minutes` |
+| Steps by the day they were marked, unticked forgotten | `counts steps on the day they were marked done, and forgets one unticked` |
+| Only continued struggles count | `counts only the struggles you continued after` |
+| Older rows are left out; the first day is in | `leaves out what is older than the days asked for` |
+| `days` from 1 to 90; seven bad values; an unknown field | `answers as many days as asked, from 1 to 90`, `refuses days=…`, `refuses an unknown query field` |
+| Another user's work is invisible | `does not count another user's work` |
+| `401` without a login | `needs a login` |
+
+### Check it
+
+```bash
+pnpm test:e2e
+```
+
+All 411 tests pass. There is no migration to run.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running). In Apidog, import `http://localhost:3001/api/docs-json` again first, so the new route appears under **progress**.
+
+1. **GET /progress** → *Execute* with `days` as pre-filled (`7`) → `200`, seven days ending today, your timezone's today. Whatever you did in steps 1 to 3 is in there: the sessions you ended as minutes, the steps you ticked under `stepsDone`.
+2. **GET /progress** with `days` = `1` → today only. With `90` → ninety days.
+3. **GET /progress** with `days` = `0`, then `91`, then `abc` → `400` with `{ "field": "days", "code": "matches" }` each time.
+4. **POST /sessions** on a step, wait a minute, **POST /sessions/{id}/end** with `{ "outcome": "done", "rating": 4 }`. **GET /progress** → today's `focusMinutes` grew by one and `stepsDone` by one.
+5. **POST /sessions** on another step and leave it running for a minute or two. **GET /progress** → nothing changed: a running session adds nothing yet. Then **POST /sessions/{id}/stop** → **GET /progress** → its minutes are there, before any review. End it.
+6. **POST /goals/{id}/archive** → **GET /progress** → the same numbers. **POST /goals/{id}/unarchive**.
+7. In pgAdmin (<http://localhost:5050>), the day boundary. Your `started_at` values are stored in UTC; the answer groups them by your timezone:
+
+   ```sql
+   SELECT started_at, (started_at AT TIME ZONE 'Asia/Dubai')::date AS dubai_day FROM sessions ORDER BY started_at;
+   ```
+
+   A session started after 20:00 UTC shows the next day's date in `dubai_day`, and that is the day it is counted on.
 

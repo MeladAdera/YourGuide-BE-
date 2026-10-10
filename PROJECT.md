@@ -227,7 +227,7 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | POST | `/api/sessions/:id/end` | End a running or stopped session with its review: `outcome`, `rating`, optional `note`. `done` marks the step done as of the end time. 404 if it is not active, or not yours |
 | POST | `/api/struggles` | Describe struggle → AI advice |
 | PATCH | `/api/struggles/:id` | Mark continued / stopped |
-| GET | `/api/progress?days=7` | Progress data for charts |
+| GET | `/api/progress?days=7` | Per day in the user's timezone, oldest first, today last: focus minutes, steps done, times struggled and continued; plus the totals. `days` from 1 to 90 |
 | POST | `/api/tasks/:id/breakdown` | AI suggests steps (phase 6) |
 
 ## 9. Environment Variables

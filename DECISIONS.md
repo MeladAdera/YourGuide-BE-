@@ -348,3 +348,25 @@ Four rules the user wrote into `PROJECT.md` §6.3 on 2026-10-10: nothing closes 
 
 **What the four rules settle.** The two open questions of 2026-10-06 (a forgotten session, a mistaken start) are closed: a forgotten session counts its hours until the user stops it, and a mistaken start is ended with a review like any other. The "Not built" list of that entry is superseded by this one; editing a review is still not built.
 
+## 2026-10-10 — Progress: one statement, the user's days, zeros where nothing happened
+
+`GET /api/progress?days=7` answers one entry per day, oldest first, today last, with focus minutes, steps done and times struggled-and-continued, plus the totals of the period (YOU-24). Nothing is stored for it: the sessions, steps and struggles already say it all.
+
+**Every day present.** The days come from `generate_series`, so a day with nothing is a row of zeros and the answer always has `days` entries. A chart needs an even axis, and "nothing on Tuesday" is information.
+
+**"Day" is the user's day.** Every time is turned into `users.timezone` before its date is taken: `(started_at AT TIME ZONE timezone)::date`. A session at 01:30 in Dubai is 21:30 the day before in UTC; it counts on the Dubai day. This is what `users.timezone` was added for (2026-09-30). The timezone comes from the users row inside the same statement, so no other module is needed.
+
+**A session counts on the day it started, all of it.** Chosen on 2026-10-10 over splitting a session at midnight. Work from 23:50 to 00:20 is 30 minutes on the first day. Splitting is more exact and noticeably more code, for a case the person who did the work would describe the same way: "I worked late".
+
+**Minutes from ended sessions only, added up before rounding.** `ended_at − started_at`: a running session adds nothing yet, a stopped one awaiting its review counts, work under an archived goal counts. The seconds of a day are summed and rounded once to whole minutes, so three sessions of 10:20 each make 31, not 30.
+
+**Three numbers per day, and totals.** The issue read "per day: minutes, steps, and total struggled-and-continued". Chosen on 2026-10-10: all three per day, and all three totals, so one call draws the bars and the headline number. Totals are the days added up in code, not a second query, so the two cannot disagree.
+
+**`days` is 1 to 90, default 7.** Query values are text, so the rule is written on the text (one or two digits, 1 to 90) and the code name is `matches`. 90 covers a quarter and bounds the answer.
+
+**Only the window is read.** Each count looks at rows from the first instant of the first local day on (`date::timestamp AT TIME ZONE timezone`), so the `(user_id, started_at)` index does the work and years of history cost nothing. All of it was tried against PostgreSQL 16 before writing the statement.
+
+**The date is text.** `to_char(day, 'YYYY-MM-DD')`, not a `date` column: pg turns a `date` into a JavaScript Date at the server's local midnight, and the day could shift on the way out.
+
+**Not built:** anything per goal or per task, and weeks or months as units. The frontend can add days up; a different grouping is a later route if one is ever needed.
+
