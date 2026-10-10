@@ -8,8 +8,8 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator.js';
+import { LastDaysQuery, MAX_DAYS } from '../common/last-days.query.js';
 import { Progress } from './dto/progress.dto.js';
-import { MAX_PROGRESS_DAYS, ProgressQuery } from './dto/progress.query.js';
 import { ProgressService } from './progress.service.js';
 
 // One route, read-only. The frontend's progress page calls it with 7 or
@@ -35,12 +35,12 @@ export class ProgressController {
       'One entry per day in your timezone, oldest first, today last, and the totals.',
   })
   @ApiBadRequestResponse({
-    description: `\`days\` is not a whole number from 1 to ${String(MAX_PROGRESS_DAYS)}, or an unknown query field.`,
+    description: `\`days\` is not a whole number from 1 to ${String(MAX_DAYS)}, or an unknown query field.`,
   })
   @Get()
   lastDays(
     @CurrentUser() userId: string,
-    @Query() query: ProgressQuery,
+    @Query() query: LastDaysQuery,
   ): Promise<Progress> {
     return this.progress.lastDays(userId, query);
   }

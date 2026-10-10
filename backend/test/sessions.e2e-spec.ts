@@ -996,6 +996,116 @@ describe('sessions', () => {
     });
   });
 
+  describe('the history', () => {
+    function history(
+      query = '',
+      as: string | null = cookie,
+    ): Promise<Response> {
+      return call('get', `/sessions${query}`, { as });
+    }
+
+    /** A completed session written by hand, started some time ago. */
+    async function completedAgo(interval: string): Promise<void> {
+      await pool.query(
+        `INSERT INTO sessions
+           (user_id, step_id, started_at, ended_at, outcome, rating)
+         VALUES ($1, $2, now() - $3::interval,
+                 now() - $3::interval + interval '25 minutes', 'progress', 3)`,
+        [userId, stepId, interval],
+      );
+    }
+
+    it('lists completed sessions newest first, with their reviews', async () => {
+      const first = await end((await started()).id, {
+        outcome: 'stuck',
+        rating: 2,
+        note: 'First',
+      });
+      const another = await created(
+        `/tasks/${taskId}/steps`,
+        { title: 'Practice WHERE' },
+        cookie,
+      );
+      const second = await end((await started(another)).id, {
+        ...DONE,
+        note: 'Second',
+      });
+
+      const listed = await history();
+
+      expect(listed.status).toBe(200);
+      expect(listed.body).toEqual([second.body, first.body]);
+    });
+
+    it('leaves the open session out until it is reviewed', async () => {
+      const done = await end((await started()).id);
+      const open = await started();
+      expect((await history()).body).toEqual([done.body]);
+
+      await stop(open.id);
+      expect((await history()).body).toEqual([done.body]);
+
+      const reviewed = await end(open.id);
+      expect((await history()).body).toEqual([reviewed.body, done.body]);
+    });
+
+    it('is empty with nothing completed', async () => {
+      await started();
+
+      const listed = await history();
+
+      expect(listed.status).toBe(200);
+      expect(listed.body).toEqual([]);
+    });
+
+    it('looks back the same days as progress', async () => {
+      // Six days ago is the first day of a week; seven days ago is out.
+      await completedAgo('6 days');
+      await completedAgo('7 days');
+
+      const week = (await history()).body as EndedBody[];
+      const eight = (await history('?days=8')).body as EndedBody[];
+      const progress = (await call('get', '/progress')).body as {
+        totals: { focusMinutes: number };
+      };
+
+      expect(week).toHaveLength(1);
+      expect(eight).toHaveLength(2);
+      expect(progress.totals.focusMinutes).toBe(25);
+    });
+
+    it("does not list another user's sessions", async () => {
+      const other = await register('other@example.com');
+      await saveRequiredScreens(app, other.cookie);
+      const theirs = await plan(other.cookie, 'Their goal');
+      const session = (await start({ stepId: theirs.stepId }, other.cookie))
+        .body as SessionBody;
+      await end(session.id, REVIEW, other.cookie);
+
+      expect((await history()).body).toEqual([]);
+      expect((await history('', other.cookie)).body).toHaveLength(1);
+    });
+
+    it.each(['0', '91', 'x'])('refuses days=%s: 400', async (days) => {
+      const response = await history(`?days=${days}`);
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        code: 'validation.failed',
+        errors: [{ field: 'days', code: 'matches' }],
+      });
+    });
+
+    it('refuses an unknown query field: 400', async () => {
+      const response = await history('?weeks=1');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        errors: [{ field: 'weeks', code: 'whitelistValidation' }],
+      });
+    });
+  });
+
   it('needs a login on every endpoint', async () => {
     const session = await started();
     const as = null;
@@ -1003,6 +1113,7 @@ describe('sessions', () => {
     expect((await start({ stepId }, as)).status).toBe(401);
     expect((await active(as)).status).toBe(401);
     expect((await stop(session.id, as)).status).toBe(401);
+    expect((await call('get', '/sessions', { as })).status).toBe(401);
     expect((await end(session.id, REVIEW, as)).status).toBe(401);
     expect((await active()).body).toEqual(session);
     expect(await count('sessions')).toBe(1);

@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -20,6 +21,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator.js';
+import { LastDaysQuery, MAX_DAYS } from '../common/last-days.query.js';
 import { EndSessionDto } from './dto/end-session.dto.js';
 import { EndedSession, Session } from './dto/session.dto.js';
 import { StartSessionDto } from './dto/start-session.dto.js';
@@ -69,6 +71,28 @@ export class SessionsController {
     @Body() dto: StartSessionDto,
   ): Promise<Session> {
     return this.sessions.start(userId, dto);
+  }
+
+  // The history. Completed sessions only: the open one, if any, is on
+  // /sessions/active with its own shape, and a list that mixed the two
+  // would need empty review fields on every item.
+  @ApiOperation({
+    summary: 'Your completed sessions of the last days, newest first',
+  })
+  @ApiOkResponse({
+    type: [EndedSession],
+    description:
+      'Each with its review and the step, task and goal by name. The same days as GET /progress. The open session, if any, is on /sessions/active instead.',
+  })
+  @ApiBadRequestResponse({
+    description: `\`days\` is not a whole number from 1 to ${String(MAX_DAYS)}, or an unknown query field.`,
+  })
+  @Get()
+  list(
+    @CurrentUser() userId: string,
+    @Query() query: LastDaysQuery,
+  ): Promise<EndedSession[]> {
+    return this.sessions.list(userId, query);
   }
 
   // 404, not 200 with null, when nothing is active: the same answer an

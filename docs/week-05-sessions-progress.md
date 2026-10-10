@@ -10,6 +10,7 @@ Two different things are called "session" in this project. The login session is 
 | 2 | [End a session with its review](#step-2--end-a-session-with-its-review) | YOU-23 | Done |
 | 3 | [Stop the clock, review later](#step-3--stop-the-clock-review-later) | YOU-23 | Done |
 | 4 | [Progress per day](#step-4--progress-per-day) | YOU-24 | Done |
+| 5 | [Session history](#step-5--session-history) | YOU-24 | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -672,7 +673,7 @@ Three reasons it is built now:
 
 | File | Layer | Purpose |
 |---|---|---|
-| `src/progress/dto/progress.query.ts` | Boundary | `days`: 1 to 90, default 7 |
+| `src/common/last-days.query.ts` | Boundary | `days`: 1 to 90, default 7 (in `src/progress/dto/` until step 5 shared it with the session history) |
 | `src/progress/dto/progress.dto.ts` | Boundary | The answer: days and totals |
 | `src/progress/progress.repository.ts` | Repository | One statement |
 | `src/progress/progress.service.ts` | Service | The totals, added up from the days |
@@ -705,7 +706,7 @@ answers `200`:
 |---|---|
 | `date` | A day in your timezone, `YYYY-MM-DD`. Oldest first, today last, every day present |
 | `focusMinutes` | Minutes of the sessions that started on this day and have ended, rounded |
-| `stepsDone` | Steps marked done on this day |
+| `stepsDone` | Steps marked done on this day, as they stand now |
 | `struggledAndContinued` | Times you said "I'm struggling" on this day and then continued |
 | `totals` | The same three, added up over the days |
 
@@ -764,7 +765,14 @@ Query values are always text, so `days` is checked as text: one or two digits, 1
 
 Not a second query. The days are the one source of truth, and a sum in code cannot disagree with them.
 
-**8. The tests** (`test/progress.e2e-spec.ts`)
+**8. Two things the full flow showed, kept as they are**
+
+After this step the whole flow was walked once more, from registration to this page. Two things looked odd and are right:
+
+- **A few seconds of work show 0 minutes.** The walk's four sessions lasted a second or two each, so the day read `focusMinutes: 0` next to `stepsDone: 3`. Whole minutes per day are the truth in minutes. Seconds in the answer would be a second number for the page to explain, so the API stays as it is.
+- **A done step that is deleted no longer counts.** A step can be deleted only while it has no session. Mark one done by hand, delete it, and the day's `stepsDone` goes back down: progress reads what exists now. Refusing the delete would make "done" a one-way street for a step nobody ever worked on.
+
+**9. The tests** (`test/progress.e2e-spec.ts`)
 
 Sessions and struggles are written straight into the tables, so their times can be chosen (a struggle has no API until week 6). Steps are marked done through the API where the day is today, and by SQL for other days.
 
@@ -813,4 +821,96 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running)
    ```
 
    A session started after 20:00 UTC shows the next day's date in `dubai_day`, and that is the day it is counted on.
+
+---
+
+## Step 5 — Session history
+
+### Why
+
+Walking the whole flow after step 4 showed a gap. Progress gives the numbers, and the sessions carry the words: an outcome, a rating, a note about what was done. Nothing could read those back. The progress page will want to show more than bars, "stuck, stuck, progress, done" on one step is the story the numbers come from, and the review screen of week 10 will want to show what you wrote last time.
+
+It is small, it belongs to this week, and the Linear issue YOU-24 now carries it as an addition.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `src/common/last-days.query.ts` | Boundary | `days`, moved out of the progress module: one rule for "the last days", used by both routes |
+| `src/sessions/sessions.repository.ts` | Repository | `listCompleted`: one `SELECT` with the same window as progress |
+| `src/sessions/sessions.service.ts` | Service | `list` |
+| `src/sessions/sessions.controller.ts` | Controller | `GET /api/sessions` |
+| `test/sessions.e2e-spec.ts` | Test | 8 new tests, 78 in the file |
+
+No migration, no new shape: each item is an `EndedSession`, exactly what `POST /sessions/:id/end` answers.
+
+### How it works
+
+**The route**
+
+```
+GET /api/sessions?days=7
+```
+
+answers `200` with a list, newest first:
+
+```
+[ { "id": "…", "startedAt": "2026-10-10T11:47:25.000Z", "endedAt": "2026-10-10T11:47:26.000Z",
+    "outcome": "stuck", "rating": 2, "note": null,
+    "step": { "id": "…", "title": "Practice JOIN" },
+    "task": { "id": "…", "title": "Learn PostgreSQL" },
+    "goal": { "id": "…", "title": "Ship my first product" } },
+  … ]
+```
+
+| Problem | Status | Code |
+|---|---|---|
+| No cookie, or the login is gone | `401` | `auth.not_logged_in` |
+| `days` is not a whole number from 1 to 90, or an unknown query field | `400` | `validation.failed` |
+
+**1. Completed sessions only**
+
+The open session, running or awaiting its review, is not in the list. It has its own route, `/sessions/active`, and its own shape. A list that mixed the two would carry empty `outcome`, `rating` and `note` on one item, and every client would have to check which kind it is looking at. So the list is the history, and the history is what has been reviewed.
+
+**2. The same window as progress**
+
+```sql
+AND sessions.started_at >= (
+      ((now() AT TIME ZONE users.timezone)::date - ($2::int - 1))::timestamp
+      AT TIME ZONE users.timezone
+    )
+```
+
+The same expression step 4 uses: the first instant of the first local day. The list for a week is what the week's bars are made of, minus a session still awaiting its review. The `(user_id, started_at)` index does the work, and `ORDER BY started_at DESC` puts the newest first.
+
+**3. One rule for `days`**
+
+The query class moved from the progress module to `src/common/last-days.query.ts`, with `daysOf()` beside it. Two routes look back over days; one place says what `days` may be.
+
+**4. The tests** (`test/sessions.e2e-spec.ts`, under `the history`)
+
+| Rule | Test |
+|---|---|
+| Newest first, each with its review | `lists completed sessions newest first, with their reviews` |
+| The open session appears only once reviewed | `leaves the open session out until it is reviewed` |
+| Nothing completed is an empty list | `is empty with nothing completed` |
+| The window is the one progress uses | `looks back the same days as progress` |
+| Another user's sessions are invisible | `does not list another user's sessions` |
+| Bad `days`, unknown field, no login | `refuses days=…`, `refuses an unknown query field`, `needs a login on every endpoint` |
+
+### Check it
+
+```bash
+pnpm test:e2e
+```
+
+All 420 tests pass. There is no migration to run.
+
+Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running). In Apidog, import `http://localhost:3001/api/docs-json` again first.
+
+1. **GET /sessions** → `200`: the sessions you ended in steps 2 to 4, newest first, each with its `outcome`, `rating` and `note`. The ones you ended with "Later" and reviewed later are there with the time the clock stopped.
+2. **POST /sessions** on an open step. **GET /sessions** → the same list: the running session is not in it. **GET /sessions/active** → there it is.
+3. **POST /sessions/{id}/stop**, then **GET /sessions** again → still not in the list. **POST /sessions/{id}/end** with any review → now it is first.
+4. **GET /sessions** with `days` = `1` → only today's. With `0` → `400`, `{ "field": "days", "code": "matches" }`.
+5. **GET /progress** with `days` = `7` → today's `focusMinutes` is the sum of the minutes of today's sessions in the list, rounded once. The numbers and the words agree.
 

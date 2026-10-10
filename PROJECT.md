@@ -192,6 +192,9 @@ Available anytime, especially during a session.
 - Focus minutes per day
 - Steps completed per day
 - **Times I struggled and continued anyway** (the most important number)
+- Per day in the user's timezone. A session counts on the day it started, all of it.
+- Whole minutes per day: a few seconds of work show 0.
+- Progress reads what exists now. A done step that is deleted afterwards (possible only while it has no session) no longer counts, so a day's number can go down. A done step with a session cannot be deleted.
 
 ## 7. Database Schema
 
@@ -221,6 +224,7 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | GET / POST | `/api/tasks/:taskId/steps` | List the task's steps in order / create a step, placed last (409 if the goal is archived) |
 | PUT | `/api/tasks/:taskId/steps/order` | Put the task's steps in a new order: `stepIds`, every step once (409 if the goal is archived) |
 | PATCH / DELETE | `/api/steps/:id` | Rename, mark done or not done / delete step (409 if the goal is archived, or the step has work history) |
+| GET | `/api/sessions?days=7` | The completed sessions of the last days, newest first, each with its review and its step, task and goal by name. Same `days` as progress |
 | GET | `/api/sessions/active` | The active session, running (`endedAt` null) or awaiting its review, with its step, task and goal by name. 404 when none is active |
 | POST | `/api/sessions` | Start session (`stepId`). 409 if the goal is archived, the step is done, or a session is still active |
 | POST | `/api/sessions/:id/stop` | Stop the clock without a review ("Later"). The session stays active until it is reviewed. 404 if it is not running |

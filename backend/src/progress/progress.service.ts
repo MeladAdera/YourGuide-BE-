@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { daysOf, LastDaysQuery } from '../common/last-days.query.js';
 import { DatabaseService } from '../database/database.service.js';
 import { Progress } from './dto/progress.dto.js';
-import { DEFAULT_PROGRESS_DAYS, ProgressQuery } from './dto/progress.query.js';
 import { ProgressRepository } from './progress.repository.js';
 
 /**
@@ -17,11 +17,11 @@ export class ProgressService {
   ) {}
 
   /** The totals are the days added up: one source of truth, the days. */
-  async lastDays(userId: string, query: ProgressQuery): Promise<Progress> {
+  async lastDays(userId: string, query: LastDaysQuery): Promise<Progress> {
     const days = await this.progress.lastDays(
       this.db.pool,
       userId,
-      Number(query.days ?? DEFAULT_PROGRESS_DAYS),
+      daysOf(query),
     );
     return {
       days,

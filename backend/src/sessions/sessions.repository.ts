@@ -93,6 +93,38 @@ export class SessionsRepository {
   }
 
   /**
+   * The completed sessions that started in the last `days` of the user's
+   * days, newest first, each with its review. The same window as
+   * progress: from the first instant of the first local day on, so the
+   * list for a week holds exactly the sessions progress counted for it,
+   * minus any still awaiting its review. The (user_id, started_at) index
+   * does the work.
+   */
+  async listCompleted(
+    executor: Executor,
+    userId: string,
+    days: number,
+  ): Promise<EndedSession[]> {
+    const { rows } = await executor.query<EndedSessionRow>(
+      `SELECT ${SESSION}, sessions.outcome, sessions.rating, sessions.note
+         FROM sessions
+         JOIN steps ON steps.id = sessions.step_id
+         JOIN tasks ON tasks.id = steps.task_id
+         JOIN goals ON goals.id = tasks.goal_id
+         JOIN users ON users.id = sessions.user_id
+        WHERE sessions.user_id = $1
+          AND sessions.outcome IS NOT NULL
+          AND sessions.started_at >= (
+                ((now() AT TIME ZONE users.timezone)::date - ($2::int - 1))::timestamp
+                AT TIME ZONE users.timezone
+              )
+        ORDER BY sessions.started_at DESC`,
+      [userId, days],
+    );
+    return rows.map(toEndedSession);
+  }
+
+  /**
    * Stops the clock of a running session, now, without a review. The
    * session is then awaiting its review.
    *

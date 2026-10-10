@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ApiError } from '../common/api-error.js';
+import { daysOf, LastDaysQuery } from '../common/last-days.query.js';
 import { DatabaseService } from '../database/database.service.js';
 import { isUniqueViolation } from '../database/pg-errors.js';
 import { GoalsRepository } from '../goals/goals.repository.js';
@@ -38,6 +39,15 @@ export class SessionsService {
   /** The active session, running or awaiting review, or 404. */
   async active(userId: string): Promise<Session> {
     return found(await this.sessions.findActive(this.db.pool, userId));
+  }
+
+  /**
+   * The history: completed sessions of the last days, newest first, with
+   * their reviews. Progress gives the numbers; this is what they are
+   * made of.
+   */
+  list(userId: string, query: LastDaysQuery): Promise<EndedSession[]> {
+    return this.sessions.listCompleted(this.db.pool, userId, daysOf(query));
   }
 
   /**

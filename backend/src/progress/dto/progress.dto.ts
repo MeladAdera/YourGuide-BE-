@@ -11,13 +11,14 @@ export class ProgressDay {
   @ApiProperty({
     example: 50,
     description:
-      'Minutes of the focus sessions that started on this day and have ended, rounded. A running session adds nothing yet.',
+      'Minutes of the focus sessions that started on this day and have ended, rounded to whole minutes: a session under half a minute adds 0. A running session adds nothing yet.',
   })
   focusMinutes!: number;
 
   @ApiProperty({
     example: 2,
-    description: 'Steps marked done on this day.',
+    description:
+      'Steps marked done on this day, as they stand now: a step deleted afterwards no longer counts.',
   })
   stepsDone!: number;
 
