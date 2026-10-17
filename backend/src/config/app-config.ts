@@ -1,4 +1,8 @@
 const DEFAULT_PORT = 3001;
+const DEFAULT_AI_MODEL = 'openai/gpt-oss-120b';
+const DEFAULT_AI_DAILY_LIMIT = 10;
+const DEFAULT_AI_TIMEOUT_MS = 20_000;
+const MIN_AI_TIMEOUT_MS = 1_000;
 
 /**
  * Every environment variable the API uses, read and validated once at startup.
@@ -15,12 +19,47 @@ export class AppConfig {
    * from X-Forwarded-For. The rate limit counts requests per client IP.
    */
   readonly trustProxy: number;
+  /**
+   * The Groq API key. The AI advice ("I'm struggling") is requested with it,
+   * from the backend only: it never reaches the browser.
+   */
+  readonly groqApiKey: string;
+  /**
+   * The model that writes the advice. Groq checks the id, so a wrong one
+   * fails at the first call, not at startup.
+   */
+  readonly aiModel: string;
+  /**
+   * How many struggles one user may send to the model per day, counted in
+   * the user's own timezone. Past it the API answers 429 and sends nothing.
+   */
+  readonly aiDailyLimit: number;
+  /**
+   * How long one advice call may take, retries included, in milliseconds.
+   * Past it the API answers 503 and saves nothing.
+   */
+  readonly aiTimeoutMs: number;
 
   constructor(env: NodeJS.ProcessEnv) {
     this.databaseUrl = required(env, 'DATABASE_URL');
     this.port = parsePort(env.PORT);
     this.isProduction = env.NODE_ENV === 'production';
     this.trustProxy = parseTrustProxy(env.TRUST_PROXY);
+    this.groqApiKey = required(env, 'GROQ_API_KEY');
+    this.aiModel = optional(env.AI_MODEL) ?? DEFAULT_AI_MODEL;
+    this.aiDailyLimit = parseWholeNumber(env.AI_DAILY_LIMIT, {
+      name: 'AI_DAILY_LIMIT',
+      fallback: DEFAULT_AI_DAILY_LIMIT,
+      min: 1,
+      expected:
+        'the number of advice calls a user may make per day (1 or more)',
+    });
+    this.aiTimeoutMs = parseWholeNumber(env.AI_TIMEOUT_MS, {
+      name: 'AI_TIMEOUT_MS',
+      fallback: DEFAULT_AI_TIMEOUT_MS,
+      min: MIN_AI_TIMEOUT_MS,
+      expected: `a number of milliseconds (${String(MIN_AI_TIMEOUT_MS)} or more)`,
+    });
   }
 }
 
@@ -33,6 +72,11 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
     );
   }
   return value;
+}
+
+/** An unset or empty variable means "use the default". */
+function optional(value: string | undefined): string | undefined {
+  return value === undefined || value === '' ? undefined : value;
 }
 
 function parsePort(value: string | undefined): number {
@@ -59,4 +103,20 @@ function parseTrustProxy(value: string | undefined): number {
     );
   }
   return hops;
+}
+
+function parseWholeNumber(
+  value: string | undefined,
+  rule: { name: string; fallback: number; min: number; expected: string },
+): number {
+  if (value === undefined || value === '') {
+    return rule.fallback;
+  }
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < rule.min) {
+    throw new Error(
+      `Invalid environment variable ${rule.name}: expected ${rule.expected}, got "${value}".`,
+    );
+  }
+  return number;
 }

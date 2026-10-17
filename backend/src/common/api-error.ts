@@ -94,6 +94,10 @@ export const API_ERRORS = {
   // A body or a query refused by a DTO. The answer carries the sentences
   // of the broken rules as `message`, and the rules themselves, by field,
   // as `errors` (see validation-errors.ts).
+  'ai.unavailable': {
+    status: HttpStatus.SERVICE_UNAVAILABLE,
+    message: 'Advice is not available right now. Try again in a minute.',
+  },
   'validation.failed': {
     status: HttpStatus.BAD_REQUEST,
     message: 'Some fields are not valid.',

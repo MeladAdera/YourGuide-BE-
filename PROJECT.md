@@ -242,7 +242,10 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 |---|---|
 | `DATABASE_URL` | api |
 | `TRUST_PROXY` | api (optional, default 0: how many proxies are in front, set at deploy so the rate limit sees the real client IP) |
-| `ANTHROPIC_API_KEY` | api (added in phase 5) |
+| `GROQ_API_KEY` | api (the AI advice behind "I'm struggling"; the app refuses to start without it) |
+| `AI_MODEL` | api (optional, default `openai/gpt-oss-120b`: the model that writes the advice) |
+| `AI_DAILY_LIMIT` | api (optional, default 10: struggles one user may send to the model per day, in their timezone; past it 429) |
+| `AI_TIMEOUT_MS` | api (optional, default 20000: how long one advice call may take, retries included; past it 503) |
 | `API_URL` | web (rewrite target) |
 
 ## 10. Build Plan
