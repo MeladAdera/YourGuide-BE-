@@ -1,8 +1,25 @@
 const DEFAULT_PORT = 3001;
-const DEFAULT_AI_MODEL = 'openai/gpt-oss-120b';
 const DEFAULT_AI_DAILY_LIMIT = 10;
 const DEFAULT_AI_TIMEOUT_MS = 20_000;
 const MIN_AI_TIMEOUT_MS = 1_000;
+
+/**
+ * The language-model providers the backend can talk to. One is active, chosen
+ * by AI_PROVIDER; its own key variable is then required. Mistral is the
+ * default: it is the one that answers from the developer's network.
+ */
+export const AI_PROVIDERS = ['mistral', 'groq'] as const;
+export type AiProviderName = (typeof AI_PROVIDERS)[number];
+
+const API_KEY_VARIABLE: Record<AiProviderName, string> = {
+  mistral: 'MISTRAL_API_KEY',
+  groq: 'GROQ_API_KEY',
+};
+
+const DEFAULT_AI_MODEL: Record<AiProviderName, string> = {
+  mistral: 'mistral-medium-latest',
+  groq: 'openai/gpt-oss-120b',
+};
 
 /**
  * Every environment variable the API uses, read and validated once at startup.
@@ -19,14 +36,17 @@ export class AppConfig {
    * from X-Forwarded-For. The rate limit counts requests per client IP.
    */
   readonly trustProxy: number;
+  /** Which provider writes the AI advice ("I'm struggling"). */
+  readonly aiProvider: AiProviderName;
   /**
-   * The Groq API key. The AI advice ("I'm struggling") is requested with it,
-   * from the backend only: it never reaches the browser.
+   * The active provider's API key (MISTRAL_API_KEY or GROQ_API_KEY). The
+   * advice is requested with it from the backend only: it never reaches
+   * the browser.
    */
-  readonly groqApiKey: string;
+  readonly aiApiKey: string;
   /**
-   * The model that writes the advice. Groq checks the id, so a wrong one
-   * fails at the first call, not at startup.
+   * The model that writes the advice. The provider checks the id, so a wrong
+   * one fails at the first call, not at startup.
    */
   readonly aiModel: string;
   /**
@@ -45,8 +65,9 @@ export class AppConfig {
     this.port = parsePort(env.PORT);
     this.isProduction = env.NODE_ENV === 'production';
     this.trustProxy = parseTrustProxy(env.TRUST_PROXY);
-    this.groqApiKey = required(env, 'GROQ_API_KEY');
-    this.aiModel = optional(env.AI_MODEL) ?? DEFAULT_AI_MODEL;
+    this.aiProvider = parseAiProvider(env.AI_PROVIDER);
+    this.aiApiKey = required(env, API_KEY_VARIABLE[this.aiProvider]);
+    this.aiModel = optional(env.AI_MODEL) ?? DEFAULT_AI_MODEL[this.aiProvider];
     this.aiDailyLimit = parseWholeNumber(env.AI_DAILY_LIMIT, {
       name: 'AI_DAILY_LIMIT',
       fallback: DEFAULT_AI_DAILY_LIMIT,
@@ -77,6 +98,16 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 /** An unset or empty variable means "use the default". */
 function optional(value: string | undefined): string | undefined {
   return value === undefined || value === '' ? undefined : value;
+}
+
+function parseAiProvider(value: string | undefined): AiProviderName {
+  const name = optional(value) ?? AI_PROVIDERS[0];
+  if (!(AI_PROVIDERS as readonly string[]).includes(name)) {
+    throw new Error(
+      `Invalid environment variable AI_PROVIDER: expected one of ${AI_PROVIDERS.join(', ')}, got "${name}".`,
+    );
+  }
+  return name as AiProviderName;
 }
 
 function parsePort(value: string | undefined): number {

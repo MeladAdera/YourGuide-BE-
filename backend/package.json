@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "nest start --watch --env-file .env",
+    "ai:check": "node scripts/groq-check.js",
     "build": "nest build",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
@@ -37,6 +38,7 @@
     ]
   },
   "dependencies": {
+    "@mistralai/mistralai": "^2.7.0",
     "@nestjs/common": "^12.1.1",
     "@nestjs/core": "^12.1.1",
     "@nestjs/platform-express": "^12.1.1",

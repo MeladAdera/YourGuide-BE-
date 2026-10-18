@@ -1,19 +1,19 @@
 import { AppConfig } from './app-config.js';
 
 const DATABASE_URL = 'postgres://user:pass@localhost:5432/db';
-const GROQ_API_KEY = 'gsk_test';
+const MISTRAL_API_KEY = 'mistral_test';
 /** The two variables without which the app refuses to start. */
-const BASE = { DATABASE_URL, GROQ_API_KEY };
+const BASE = { DATABASE_URL, MISTRAL_API_KEY };
 
 describe('AppConfig', () => {
   it('throws a clear error when DATABASE_URL is missing', () => {
-    expect(() => new AppConfig({ GROQ_API_KEY })).toThrow(
+    expect(() => new AppConfig({ MISTRAL_API_KEY })).toThrow(
       'Missing required environment variable: DATABASE_URL',
     );
   });
 
   it('treats an empty DATABASE_URL as missing', () => {
-    expect(() => new AppConfig({ GROQ_API_KEY, DATABASE_URL: '' })).toThrow(
+    expect(() => new AppConfig({ MISTRAL_API_KEY, DATABASE_URL: '' })).toThrow(
       'Missing required environment variable: DATABASE_URL',
     );
   });
@@ -62,31 +62,56 @@ describe('AppConfig', () => {
   });
 
   describe('the AI advice', () => {
-    it('throws a clear error when GROQ_API_KEY is missing or empty', () => {
+    it('uses Mistral by default and requires MISTRAL_API_KEY', () => {
+      const config = new AppConfig(BASE);
+
+      expect(config.aiProvider).toBe('mistral');
+      expect(config.aiApiKey).toBe(MISTRAL_API_KEY);
+      expect(config.aiModel).toBe('mistral-medium-latest');
       expect(() => new AppConfig({ DATABASE_URL })).toThrow(
-        'Missing required environment variable: GROQ_API_KEY',
+        'Missing required environment variable: MISTRAL_API_KEY',
       );
-      expect(() => new AppConfig({ DATABASE_URL, GROQ_API_KEY: '' })).toThrow(
-        'Missing required environment variable: GROQ_API_KEY',
+      expect(
+        () => new AppConfig({ DATABASE_URL, MISTRAL_API_KEY: '' }),
+      ).toThrow('Missing required environment variable: MISTRAL_API_KEY');
+    });
+
+    it('switches to Groq with AI_PROVIDER=groq, which requires GROQ_API_KEY', () => {
+      const config = new AppConfig({
+        DATABASE_URL,
+        AI_PROVIDER: 'groq',
+        GROQ_API_KEY: 'gsk_test',
+      });
+
+      expect(config.aiProvider).toBe('groq');
+      expect(config.aiApiKey).toBe('gsk_test');
+      expect(config.aiModel).toBe('openai/gpt-oss-120b');
+      expect(
+        () =>
+          new AppConfig({ DATABASE_URL, AI_PROVIDER: 'groq', MISTRAL_API_KEY }),
+      ).toThrow('Missing required environment variable: GROQ_API_KEY');
+    });
+
+    it('refuses an unknown AI_PROVIDER', () => {
+      expect(() => new AppConfig({ ...BASE, AI_PROVIDER: 'openai' })).toThrow(
+        'Invalid environment variable AI_PROVIDER',
       );
     });
 
-    it('reads GROQ_API_KEY and defaults the model, the daily limit and the timeout', () => {
+    it('defaults the daily limit and the timeout', () => {
       const config = new AppConfig(BASE);
 
-      expect(config.groqApiKey).toBe(GROQ_API_KEY);
-      expect(config.aiModel).toBe('openai/gpt-oss-120b');
       expect(config.aiDailyLimit).toBe(10);
       expect(config.aiTimeoutMs).toBe(20_000);
     });
 
     it('treats an empty AI_MODEL as the default and reads a set one', () => {
       expect(new AppConfig({ ...BASE, AI_MODEL: '' }).aiModel).toBe(
-        'openai/gpt-oss-120b',
+        'mistral-medium-latest',
       );
       expect(
-        new AppConfig({ ...BASE, AI_MODEL: 'openai/gpt-oss-20b' }).aiModel,
-      ).toBe('openai/gpt-oss-20b');
+        new AppConfig({ ...BASE, AI_MODEL: 'mistral-small-latest' }).aiModel,
+      ).toBe('mistral-small-latest');
     });
 
     it('reads AI_DAILY_LIMIT as a whole number of calls, 1 or more', () => {

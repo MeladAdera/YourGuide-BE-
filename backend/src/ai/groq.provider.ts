@@ -5,6 +5,7 @@ import type {
   ChatCompletionCreateParamsNonStreaming,
 } from 'groq-sdk/resources/chat/completions';
 import { ADVICE_SCHEMA } from './advice.js';
+import { withDeadline } from './deadline.js';
 import {
   AiProvider,
   AiUnavailableError,
@@ -37,29 +38,12 @@ export class GroqProvider implements AiProvider {
   ) {}
 
   async complete(prompt: Prompt): Promise<Completion> {
-    // One deadline for the whole call. The SDK retries 429s and 5xx on its
-    // own, sleeping between tries; the signal stops the request in flight,
-    // and the race below stops the wait even while the SDK sleeps.
-    const deadline = AbortSignal.timeout(this.options.timeoutMs);
-    const call = this.client.chat.completions.create(this.request(prompt), {
-      signal: deadline,
-    });
-    const timedOut = new Promise<never>((_, reject) => {
-      deadline.addEventListener(
-        'abort',
-        () => {
-          reject(new AiUnavailableError('Timeout'));
-        },
-        { once: true },
-      );
-    });
-
     let response: ChatCompletion;
     try {
-      response = await Promise.race([call, timedOut]);
+      response = await withDeadline(this.options.timeoutMs, (signal) =>
+        this.client.chat.completions.create(this.request(prompt), { signal }),
+      );
     } catch (error) {
-      // The losing promise still settles later; nobody is listening.
-      void call.catch(() => undefined);
       throw unavailable(error);
     }
 
