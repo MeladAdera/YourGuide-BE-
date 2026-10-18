@@ -1,6 +1,7 @@
 import type { Goal } from '../../goals/dto/goal.dto.js';
 import type { Profile } from '../../profile/dto/profile.dto.js';
 import type { Session } from '../../sessions/dto/session.dto.js';
+import { SITUATIONS } from '../situation.js';
 import {
   buildPrompt,
   PastStruggle,
@@ -106,6 +107,13 @@ const PAST_STUCK: PastStruggle = {
 };
 const PAST: PastStruggle[] = [PAST_TIRED, PAST_STUCK];
 
+const PHRASES = {
+  stuck: 'Stuck',
+  tired: 'Tired',
+  comparing: 'Comparing themselves with others',
+  negative_thought: 'A negative thought',
+} as const;
+
 function context(overrides: Partial<PromptContext> = {}): PromptContext {
   return {
     locale: 'en',
@@ -151,6 +159,25 @@ describe('buildPrompt', () => {
     expect(system).toContain('fits in ten minutes');
     expect(system).not.toContain('energy left today');
   });
+
+  it.each([
+    ['stuck', 'Stuck', 'fits in ten minutes'],
+    ['tired', 'Tired', 'energy left today'],
+    ['comparing', 'Comparing themselves with others', 'definite aim'],
+    ['negative_thought', 'A negative thought', 'not a verdict'],
+  ] as const)(
+    'carries the guidance for %s and no other situation',
+    (situation, label, phrase) => {
+      const { system, user } = buildPrompt(context({ situation }));
+
+      expect(system).toContain(`## This situation: ${label}`);
+      expect(system).toContain(phrase);
+      for (const other of SITUATIONS.filter((s) => s !== situation)) {
+        expect(system).not.toContain(`## This situation: ${PHRASES[other]}`);
+      }
+      expect(user).toContain(`Situation: ${label}`);
+    },
+  );
 
   it("asks for Arabic without assuming the reader's gender", () => {
     const { system } = buildPrompt(context({ locale: 'ar' }));
