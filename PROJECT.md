@@ -247,7 +247,7 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 | `AI_BASE_URL` | api (required for `compatible`: the OpenAI-style endpoint; optional override for `zai`) |
 | `AI_MODEL` | api (default `glm-4.5-flash` on Z.ai, `mistral-medium-latest` on Mistral, `openai/gpt-oss-120b` on Groq; required for `compatible`) |
 | `AI_DAILY_LIMIT` | api (optional, default 10: struggles one user may send to the model per day, in their timezone; past it 429) |
-| `AI_TIMEOUT_MS` | api (optional, default 20000: how long one advice call may take, retries included; past it 503) |
+| `AI_TIMEOUT_MS` | api (optional, default 45000: how long one advice call may take, retries included; past it 503) |
 | `API_URL` | web (rewrite target) |
 
 ## 10. Build Plan

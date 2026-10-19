@@ -1,6 +1,6 @@
 const DEFAULT_PORT = 3001;
 const DEFAULT_AI_DAILY_LIMIT = 10;
-const DEFAULT_AI_TIMEOUT_MS = 20_000;
+const DEFAULT_AI_TIMEOUT_MS = 45_000;
 const MIN_AI_TIMEOUT_MS = 1_000;
 
 /**
@@ -99,7 +99,9 @@ export class AppConfig {
   readonly aiDailyLimit: number;
   /**
    * How long one advice call may take, retries included, in milliseconds.
-   * Past it the API answers 503 and saves nothing.
+   * Past it the API answers 503 and saves nothing. 45 s by default: on the
+   * free tier a full prompt usually answers in 5–10 s, and one in eight took
+   * 42 s when measured (2026-10-19); a late answer beats a lost one.
    */
   readonly aiTimeoutMs: number;
 

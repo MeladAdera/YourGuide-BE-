@@ -158,7 +158,7 @@ describe('AppConfig', () => {
       const config = new AppConfig(BASE);
 
       expect(config.aiDailyLimit).toBe(10);
-      expect(config.aiTimeoutMs).toBe(20_000);
+      expect(config.aiTimeoutMs).toBe(45_000);
     });
 
     it('treats an empty AI_MODEL as the default and reads a set one', () => {
@@ -189,7 +189,7 @@ describe('AppConfig', () => {
 
     it('reads AI_TIMEOUT_MS as whole milliseconds, 1000 or more', () => {
       expect(new AppConfig({ ...BASE, AI_TIMEOUT_MS: '' }).aiTimeoutMs).toBe(
-        20_000,
+        45_000,
       );
       expect(
         new AppConfig({ ...BASE, AI_TIMEOUT_MS: '1000' }).aiTimeoutMs,
