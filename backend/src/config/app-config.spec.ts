@@ -68,7 +68,7 @@ describe('AppConfig', () => {
       expect(config.aiProvider).toBe('zai');
       expect(config.aiApiKey).toBe(ZAI_API_KEY);
       expect(config.aiBaseUrl).toBe('https://api.z.ai/api/paas/v4');
-      expect(config.aiModel).toBe('glm-4.7-flash');
+      expect(config.aiModel).toBe('glm-4.5-flash');
       expect(() => new AppConfig({ DATABASE_URL })).toThrow(
         'Missing required environment variable: ZAI_API_KEY',
       );
@@ -163,7 +163,7 @@ describe('AppConfig', () => {
 
     it('treats an empty AI_MODEL as the default and reads a set one', () => {
       expect(new AppConfig({ ...BASE, AI_MODEL: '' }).aiModel).toBe(
-        'glm-4.7-flash',
+        'glm-4.5-flash',
       );
       expect(new AppConfig({ ...BASE, AI_MODEL: 'glm-4.7' }).aiModel).toBe(
         'glm-4.7',

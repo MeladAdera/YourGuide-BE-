@@ -245,7 +245,7 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 | `AI_PROVIDER` | api (optional, default `zai`; or `compatible`, `mistral`, `groq`: which provider writes the AI advice behind "I'm struggling") |
 | `ZAI_API_KEY` / `AI_API_KEY` / `MISTRAL_API_KEY` / `GROQ_API_KEY` | api (the active provider's key; the app refuses to start without it, except `compatible` where it is optional) |
 | `AI_BASE_URL` | api (required for `compatible`: the OpenAI-style endpoint; optional override for `zai`) |
-| `AI_MODEL` | api (default `glm-4.7-flash` on Z.ai, `mistral-medium-latest` on Mistral, `openai/gpt-oss-120b` on Groq; required for `compatible`) |
+| `AI_MODEL` | api (default `glm-4.5-flash` on Z.ai, `mistral-medium-latest` on Mistral, `openai/gpt-oss-120b` on Groq; required for `compatible`) |
 | `AI_DAILY_LIMIT` | api (optional, default 10: struggles one user may send to the model per day, in their timezone; past it 429) |
 | `AI_TIMEOUT_MS` | api (optional, default 20000: how long one advice call may take, retries included; past it 503) |
 | `API_URL` | web (rewrite target) |

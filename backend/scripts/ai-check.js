@@ -5,6 +5,12 @@
 // the time and the tokens, never the key.
 import { Mistral } from '@mistralai/mistralai';
 import Groq from 'groq-sdk';
+import net from 'node:net';
+
+// Node tries each address of a host in turn and drops an attempt after 250 ms
+// by default; a VPN round trip to a server in Asia is longer than that, so a
+// working connection was abandoned (tried 2026-10-19). The app sets the same.
+net.setDefaultAutoSelectFamilyAttemptTimeout(1500);
 
 process.loadEnvFile('.env');
 
@@ -12,7 +18,7 @@ const PROVIDERS = {
   zai: {
     keyVariable: 'ZAI_API_KEY',
     keyRequired: true,
-    defaultModel: 'glm-4.7-flash',
+    defaultModel: 'glm-4.5-flash',
     baseUrl: 'https://api.z.ai/api/paas/v4',
     extraBody: { thinking: { type: 'disabled' } },
   },

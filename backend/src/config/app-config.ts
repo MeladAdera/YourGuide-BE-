@@ -7,7 +7,9 @@ const MIN_AI_TIMEOUT_MS = 1_000;
  * The language-model providers the backend can talk to. One is active,
  * chosen by AI_PROVIDER; its own key variable is then required.
  *
- * - `zai`: Z.ai's free GLM-4.7-Flash, through its OpenAI-style API.
+ * - `zai`: Z.ai's free GLM Flash models, through its OpenAI-style API.
+ *   GLM-4.5-Flash by default: GLM-4.7-Flash writes better but was slow and
+ *   overloaded when measured (2026-10-19); AI_MODEL switches between them.
  * - `compatible`: any other OpenAI-style endpoint (a local Ollama, Ollama
  *   cloud, Cloudflare Workers AI, Qwen, DeepSeek), by AI_BASE_URL.
  * - `mistral`, `groq`: through their own SDKs.
@@ -34,7 +36,7 @@ const PRESETS: Record<AiProviderName, ProviderPreset> = {
     keyVariable: 'ZAI_API_KEY',
     keyRequired: true,
     baseUrl: 'https://api.z.ai/api/paas/v4',
-    defaultModel: 'glm-4.7-flash',
+    defaultModel: 'glm-4.5-flash',
   },
   compatible: {
     keyVariable: 'AI_API_KEY',
