@@ -16,17 +16,26 @@ export class AiService {
 
   constructor(@Inject(AI_PROVIDER) private readonly provider: AiProvider) {}
 
-  async advise(prompt: Prompt): Promise<Advice> {
+  /** The advice behind "I'm struggling". */
+  advise(prompt: Prompt): Promise<Advice> {
+    return this.ask(prompt, parseAdvice);
+  }
+
+  /**
+   * One call: the model answers, `parse` turns the text into the expected
+   * shape or throws `AiReplyError`. Any failure is 503 `ai.unavailable`.
+   */
+  async ask<T>(prompt: Prompt, parse: (text: string) => T): Promise<T> {
     const startedAt = Date.now();
     try {
       const completion = await this.provider.complete(prompt);
-      const advice = parseAdvice(completion.text);
+      const result = parse(completion.text);
       this.logger.log(
         `advice ok model=${completion.model} ms=${elapsed(startedAt)} ` +
           `promptTokens=${String(completion.usage.promptTokens)} ` +
           `completionTokens=${String(completion.usage.completionTokens)}`,
       );
-      return advice;
+      return result;
     } catch (error) {
       if (
         error instanceof AiUnavailableError ||

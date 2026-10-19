@@ -151,25 +151,32 @@ describe('struggles', () => {
   }
 
   /**
-   * Struggles written straight into the table, at 00:30 of the user's
+   * Model calls written straight into `ai_calls`, at 00:30 of the user's
    * local day `daysAgo` days back: the earliest moment of that day, so a
    * test about "today" cannot pass by accident of the clock.
    */
-  async function insertStruggles(
+  async function insertCalls(
     howMany: number,
     options: { daysAgo?: number; user?: string } = {},
   ): Promise<void> {
     for (let i = 0; i < howMany; i++) {
       await pool.query(
-        `INSERT INTO struggles
-           (user_id, situation, description, advice, next_step, created_at)
-         SELECT id, 'stuck', 'd', 'a', 'n',
+        `INSERT INTO ai_calls (user_id, kind, created_at)
+         SELECT id, 'breakdown',
                 (((now() AT TIME ZONE timezone)::date - $2::int)::timestamp
                  + interval '30 minutes') AT TIME ZONE timezone
            FROM users WHERE id = $1`,
         [options.user ?? userId, options.daysAgo ?? 0],
       );
     }
+  }
+
+  async function callsOf(kind: string): Promise<number | undefined> {
+    const { rows } = await pool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM ai_calls WHERE kind = $1',
+      [kind],
+    );
+    return rows[0]?.count;
   }
 
   async function struggledAndContinuedToday(as = cookie): Promise<number> {
@@ -221,6 +228,7 @@ describe('struggles', () => {
       expect(rows).toEqual([
         { advice: FAKE_ADVICE.advice, next_step: FAKE_ADVICE.nextStep },
       ]);
+      expect(await callsOf('struggle')).toBe(1);
     });
 
     it('links the struggle to the open session, running or stopped, and to none once reviewed', async () => {
@@ -317,6 +325,7 @@ describe('struggles', () => {
         expect(response.status).toBe(503);
         expect(response.body).toMatchObject({ code: 'ai.unavailable' });
         expect(await count()).toBe(0);
+        expect(await callsOf('struggle')).toBe(0);
       });
 
       it.each([
@@ -354,38 +363,39 @@ describe('struggles', () => {
     });
 
     describe('the daily limit', () => {
-      it('refuses once today has reached the limit, and sends nothing to the model', async () => {
-        await insertStruggles(DAILY_LIMIT);
+      it('refuses once today has reached the limit, of any kind of call, and sends nothing to the model', async () => {
+        await insertCalls(DAILY_LIMIT);
 
         const response = await struggle();
 
         expect(response.status).toBe(429);
         expect(response.body).toMatchObject({ code: 'ai.daily_limit' });
         expect(fake.calls).toEqual([]);
-        expect(await count()).toBe(DAILY_LIMIT);
+        expect(await count()).toBe(0);
       });
 
       it("counts the user's own day: a struggle at 00:30 yesterday does not count", async () => {
-        await insertStruggles(DAILY_LIMIT - 1);
-        await insertStruggles(1, { daysAgo: 1 });
+        await insertCalls(DAILY_LIMIT - 1);
+        await insertCalls(1, { daysAgo: 1 });
 
         expect((await struggle()).status).toBe(201);
       });
 
       it('counts per user', async () => {
         const other = await register('other@example.com');
-        await insertStruggles(DAILY_LIMIT, { user: other.userId });
+        await insertCalls(DAILY_LIMIT, { user: other.userId });
 
         expect((await struggle()).status).toBe(201);
       });
 
       it('lets one of two requests at the limit through', async () => {
-        await insertStruggles(DAILY_LIMIT - 1);
+        await insertCalls(DAILY_LIMIT - 1);
 
         const responses = await Promise.all([struggle(), struggle()]);
 
         expect(responses.map((r) => r.status).sort()).toEqual([201, 429]);
-        expect(await count()).toBe(DAILY_LIMIT);
+        expect(await count()).toBe(1);
+        expect(await callsOf('struggle')).toBe(1);
       });
     });
 

@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { AiUsageService } from '../ai/ai-usage.service.js';
 import { AiService } from '../ai/ai.service.js';
 import { UsersRepository } from '../auth/users.repository.js';
 import { ApiError } from '../common/api-error.js';
-import { AppConfig } from '../config/app-config.js';
 import { DatabaseService } from '../database/database.service.js';
 import { Goal } from '../goals/dto/goal.dto.js';
 import { GoalsRepository } from '../goals/goals.repository.js';
@@ -12,7 +12,7 @@ import { SessionsRepository } from '../sessions/sessions.repository.js';
 import { AnswerStruggleDto } from './dto/answer-struggle.dto.js';
 import { CreateStruggleDto } from './dto/create-struggle.dto.js';
 import { Struggle } from './dto/struggle.dto.js';
-import { languageMatches } from './language-check.js';
+import { languageMatches } from '../common/language.js';
 import { buildPrompt } from './prompt/build-prompt.js';
 import { StrugglesRepository } from './struggles.repository.js';
 
@@ -34,7 +34,7 @@ export class StrugglesService {
 
   constructor(
     private readonly db: DatabaseService,
-    private readonly config: AppConfig,
+    private readonly usage: AiUsageService,
     private readonly struggles: StrugglesRepository,
     private readonly ai: AiService,
     private readonly profile: ProfileService,
@@ -53,11 +53,8 @@ export class StrugglesService {
    *
    * The model is asked outside the transaction. A call can take many
    * seconds, and a connection held that long for every press would starve
-   * the pool. The price is a second count inside the transaction: two
-   * requests at the limit can both pass the first check, the row lock
-   * makes them write one after the other, and the second one's count sees
-   * the first one's row. That rare race costs one model call and never
-   * writes a row past the limit.
+   * the pool. The limit is then checked again inside the transaction that
+   * writes the call and the struggle together (`AiUsageService.record`).
    *
    * The session attached is the one open when the button was pressed:
    * what the person was working on at that moment.
@@ -68,12 +65,7 @@ export class StrugglesService {
       'struggle.onboarding_required',
     );
     const pool = this.db.pool;
-    if (
-      (await this.struggles.countToday(pool, userId)) >=
-      this.config.aiDailyLimit
-    ) {
-      throw new ApiError('ai.daily_limit');
-    }
+    await this.usage.assertBelowLimit(userId);
 
     const [user, session, progress, pastStruggles] = await Promise.all([
       this.users.findById(pool, userId),
@@ -106,22 +98,15 @@ export class StrugglesService {
       this.logger.warn(`advice language mismatch locale=${user.locale}`);
     }
 
-    return this.db.withTransaction(async (client) => {
-      await this.struggles.lockUser(client, userId);
-      if (
-        (await this.struggles.countToday(client, userId)) >=
-        this.config.aiDailyLimit
-      ) {
-        throw new ApiError('ai.daily_limit');
-      }
-      return this.struggles.create(client, userId, {
+    return this.usage.record(userId, 'struggle', (client) =>
+      this.struggles.create(client, userId, {
         situation: input.situation,
         description: input.description,
         advice: advice.advice,
         nextStep: advice.nextStep,
         sessionId: session?.id ?? null,
-      });
-    });
+      }),
+    );
   }
 
   /**

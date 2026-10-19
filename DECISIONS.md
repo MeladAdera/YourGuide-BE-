@@ -427,7 +427,7 @@ Decided with the user before building (YOU-26). The prompt carries a digest of t
 
 **The model is asked outside the transaction.** A call can take many seconds; a connection held that long for every press would starve the pool of ten. The price is a second count inside the transaction, under `FOR UPDATE` on the user's own row (the same lock goals use): two requests at the limit can both pass the first check; the lock makes them write one after the other, and the second one's count sees the first one's row. The rare race costs one model call and never writes a row past the limit. A unique index cannot count, so this is the index's job done by hand.
 
-**The daily limit is per user, in the user's day, from the `struggles` table** (YOU-29, decided 2026-10-17): `AI_DAILY_LIMIT`, 10 by default. The provider's quota belongs to one key for the whole app; this is the brake we control. Counted with the same "first instant of the local day" expression the progress page uses, so the limit and the chart agree on what "today" is. *Rejected: a counter or an `ai_calls` table.* The rows already say it. The task breakdown (YOU-28) is not stored, so it will need its own count when it comes.
+**The daily limit is per user, in the user's day** (YOU-29, decided 2026-10-17): `AI_DAILY_LIMIT`, 10 by default. The provider's quota belongs to one key for the whole app; this is the brake we control. Counted with the same "first instant of the local day" expression the progress page uses, so the limit and the chart agree on what "today" is. First counted from the `struggles` table; moved the same day onto `ai_calls` (next entry), so one count covers every kind of call.
 
 **The server attaches the session.** The issue allowed a `sessionId` in the body. The server reads the open session itself, running or awaiting its review; the body cannot name one (`400`). A tab left open since yesterday would otherwise link today's struggle to yesterday's session.
 
@@ -436,3 +436,19 @@ Decided with the user before building (YOU-26). The prompt carries a digest of t
 **An answer in the wrong language is saved, and logged.** `languageMatches` counts Arabic letters; a mismatch writes one log line with the locale, nothing of the text. An answer in the other language still helps, and the log tells us how often the model slips (decided 2026-10-19). In eight real answers it did not.
 
 **Not built:** a list of past struggles (`GET /api/struggles`), until a screen needs it (decided 2026-10-19); changing an answer; anything the frontend could derive.
+
+## 2026-10-19 — The task breakdown: returned, not saved; one table counts every model call
+
+`POST /api/tasks/:id/breakdown` (YOU-28) asks the model for three to seven step titles and returns them. **Nothing is saved**: the person accepts or edits them on the screen, which creates the ones they keep with the normal route. The person stays the author of their plan, and the model's suggestion never becomes a step nobody chose.
+
+**Three to seven, the model decides** (chosen over a fixed five or a client-given count): fewer for a small task, more for a large one; a list outside the range is an invalid reply, 503. Each title must fit a step's own rule (one line, 200 characters), so the screen can create it as it is.
+
+**The model is told the goal and its why, the task, and the steps it already has**, so the suggestions continue the list instead of repeating it. Not the profile: this is planning, not advice about the person. *Rejected: the profile digest.* More tokens per call for a doubtful gain.
+
+**The steps follow the language of the task title**, the account's language when the title does not say (the issue's rule). Any Arabic letter makes a title Arabic: English writers never type Arabic script, while Arabic writers keep Latin product names. Two or more Latin letters make it English; "2024-Q4" falls back.
+
+**Refused under an archived goal** (409), although nothing is written: consistent with every other call under an archived goal, and it saves a model call for a task nobody can add steps to.
+
+**One table counts every model call: `ai_calls`** (migration 0012). A struggle is stored, so the limit could count its rows; a breakdown is not, so it could not. Chosen over an in-memory counter (gone on restart, wrong with two servers) and over no limit for breakdowns. One row per call that answered: who, what kind, when; nothing of the prompt or the answer. Written in the same transaction as whatever the answer is saved with, under the user's row lock, after a second count (`AiUsageService`), so the race that two clicks at the limit open is closed in one place for every feature. A failed call is not counted. The struggles limit moved onto this table the same day; the e2e tests moved with it.
+
+**`AiService.ask(prompt, parse)`.** The advice and the breakdown differ only in the shape of the reply, so the service takes the parser as an argument and `advise` is one use of it: one place for the call, the logging and the 503.

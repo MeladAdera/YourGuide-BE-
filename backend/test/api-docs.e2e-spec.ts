@@ -66,6 +66,7 @@ describe('API docs', () => {
       '/api/struggles',
       '/api/struggles/{id}',
       '/api/tasks/{id}',
+      '/api/tasks/{id}/breakdown',
       '/api/tasks/{taskId}/steps',
       '/api/tasks/{taskId}/steps/order',
     ]);

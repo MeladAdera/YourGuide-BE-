@@ -1111,6 +1111,38 @@ This history becomes the initial "memory" of Your Guide.
 
 ------------------------------------------------------------------------
 
+# 11. ai_calls
+
+One row per call to the language model that answered: who, what kind, when. Nothing of the prompt or the answer.
+
+```sql
+CREATE TABLE ai_calls (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  user_id UUID NOT NULL
+    REFERENCES users(id)
+    ON DELETE CASCADE,
+
+  kind TEXT NOT NULL
+    CHECK (kind IN ('struggle', 'breakdown')),
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ai_calls_user_created_idx
+ON ai_calls(user_id, created_at);
+```
+
+### Why does it exist?
+
+Every model call costs quota, and one person may make `AI_DAILY_LIMIT` of them a day (10). A struggle is stored, so it could be counted from its own table; a task breakdown is returned and not saved, so it could not. One table counts every kind with one statement, in the user's own day, the same expression the progress page uses. Added on 2026-10-19 (migration 0012, `DECISIONS.md`).
+
+### Rules
+
+- A row is written only once the model has answered, in the same transaction as whatever the answer is saved with (a struggle) or alone (a breakdown). A failed call is not counted: the person may try again.
+- The row is written under `FOR UPDATE` on the user's own row, after a second count: two requests at the limit write one row.
+- Nothing about the person is here beyond the id: the prompt and the answer are not stored, and the struggle has its own table.
+
 # 11. Complete Relationship Model
 
 ```text

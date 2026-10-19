@@ -234,7 +234,7 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | POST | `/api/struggles` | "I'm struggling": `situation` and `description` → the struggle with its `advice` and `nextStep`, in the user's language, linked to the open session if any. 409 until onboarding is complete, 429 past the daily limit, 503 when the model cannot answer (nothing saved) |
 | PATCH | `/api/struggles/:id` | Did you continue? `continued: true|false`, written once (409 after). This is what progress counts as "struggled and continued" |
 | GET | `/api/progress?days=7` | Per day in the user's timezone, oldest first, today last: focus minutes, steps done, times struggled and continued; plus the totals. `days` from 1 to 90 |
-| POST | `/api/tasks/:id/breakdown` | AI suggests steps (phase 6) |
+| POST | `/api/tasks/:id/breakdown` | The model suggests three to seven step titles for the task, in the task title's language. Returned, not saved. 404 not yours, 409 archived goal, 429 past the daily limit, 503 when the model cannot answer |
 
 ## 9. Environment Variables
 

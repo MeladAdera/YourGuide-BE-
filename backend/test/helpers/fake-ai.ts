@@ -43,6 +43,12 @@ export class FakeAi implements AiProvider {
     return this;
   }
 
+  /** Any JSON value, for a reply in another shape than an advice. */
+  answersJson(value: unknown): this {
+    this.reply = completion(JSON.stringify(value));
+    return this;
+  }
+
   /** Any text, for a reply that is not an advice. */
   answersText(text: string): this {
     this.reply = completion(text);

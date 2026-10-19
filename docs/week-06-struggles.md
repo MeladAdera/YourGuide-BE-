@@ -12,6 +12,7 @@ Every route here follows the two rules of the weeks before: the `userId` comes f
 | 4 | [Ask for advice](#step-4--ask-for-advice) | YOU-27 | Done |
 | 5 | [Did you continue?](#step-5--did-you-continue) | YOU-27 | Done |
 | 6 | [Testing against the real model](#step-6--testing-against-the-real-model) | YOU-26, YOU-29 | Done |
+| 7 | [Let the model suggest the steps of a task](#step-7--let-the-model-suggest-the-steps-of-a-task) | YOU-28 | Done |
 
 All commands on this page run inside `backend/`.
 
@@ -183,7 +184,7 @@ Eighteen prompt tests pass. To read a real prompt, run step 6's comparison and o
 
 - **Never a struggle without its advice.** `advice` and `next_step` are NOT NULL since week 1. So the model is asked first and the row is written only once the answer is there; a model failure is a 503 and no row.
 - **The model is asked outside the transaction.** A call can take many seconds, and a connection held that long for every press would starve the pool of ten.
-- **A limit per person per day.** The provider's quota belongs to one key for the whole app. `AI_DAILY_LIMIT` (10) is checked before the model is asked, so nothing is sent past it, and checked again inside the transaction: two clicks at the limit can both pass the first check, the row lock makes them write one after the other, and the second one's count sees the first one's row. That rare race costs one model call and never writes a row past the limit.
+- **A limit per person per day.** The provider's quota belongs to one key for the whole app. `AI_DAILY_LIMIT` (10) is checked before the model is asked, so nothing is sent past it, and checked again inside the transaction: two clicks at the limit can both pass the first check, the row lock makes them write one after the other, and the second one's count sees the first one's row. That rare race costs one model call and never writes a row past the limit. The count is of model calls, not struggles: every call that answered writes a row in `ai_calls` (step 7), so one limit covers every feature that asks the model.
 
 ### What we built
 
@@ -191,10 +192,11 @@ Eighteen prompt tests pass. To read a real prompt, run step 6's comparison and o
 |---|---|---|
 | `src/struggles/dto/create-struggle.dto.ts` | Boundary | `situation` (one of four codes), `description` (1 to 1000 characters). Nothing else |
 | `src/struggles/dto/struggle.dto.ts` | Boundary | A struggle as the API answers it |
-| `src/struggles/struggles.repository.ts` | Repository | `countToday`, `lockUser`, `listRecent`, `create` |
+| `src/struggles/struggles.repository.ts` | Repository | `listRecent`, `create` |
+| `src/ai/ai-usage.repository.ts`, `src/ai/ai-usage.service.ts` | Rule | The daily limit: `countToday`, `lockUser`, `record`, for every kind of model call |
 | `src/struggles/struggles.service.ts` | Service | The order of questions, the model, the transaction |
 | `src/struggles/struggles.controller.ts` | Controller | `POST /api/struggles` |
-| `src/struggles/language-check.ts` | Rule | Does the answer read as the person's language? |
+| `src/common/language.ts` | Rule | Does the answer read as the person's language? |
 | `src/profile/profile.service.ts` | Service | `requireComplete`: the profile for a write, or 409 with the screens still missing |
 | `src/sessions/sessions.module.ts`, `src/progress/progress.module.ts`, `src/auth/auth.module.ts` | Module | Export the repositories the prompt needs |
 | `src/common/api-error.ts` | Rule | `struggle.onboarding_required`, `ai.daily_limit`, `ai.unavailable` |
@@ -229,10 +231,10 @@ answers `201`:
 **1. The order of questions** (`StrugglesService.create`)
 
 1. Is onboarding complete? `requireComplete` reads the seven screens once and answers both "complete?" (409 with `missing`, like `POST /goals`) and "what is in it?" (the profile for the prompt).
-2. Is today's limit reached? `countToday` counts the user's struggles since the first instant of the user's local day, the same expression the progress page uses, so the limit and the chart agree on what "today" is.
+2. Is today's limit reached? `AiUsageService` counts the user's model calls (`ai_calls`) since the first instant of the user's local day, the same expression the progress page uses, so the limit and the chart agree on what "today" is.
 3. In parallel: the user's language, the open session, the goal or goals, seven days of progress, the last five struggles.
 4. `buildPrompt`, then `AiService.advise`. Any failure is 503, and nothing has been written.
-5. In one transaction: lock the user's row (`SELECT … FOR UPDATE`, the same lock goals use), count again, insert.
+5. In one transaction (`AiUsageService.record`): lock the user's row (`SELECT … FOR UPDATE`, the same lock goals use), count again, write the call, insert the struggle.
 
 **2. The session is attached by the server.** The Linear issue allowed a `sessionId` in the body. Decided with the user: the server reads the open session itself, running or awaiting its review, and the body cannot name one. A tab left open since yesterday would otherwise link today's struggle to yesterday's session. The whitelist refuses `sessionId` with `400`.
 
@@ -247,7 +249,7 @@ answers `201`:
 | Model failure: 503 and no row | `when the model does not answer` (four tests) |
 | Cross-user 404 | in step 5 |
 
-And the rest: what the model is told (the goal and why, the step and task, the past struggle and whether the person continued, the last days; the Arabic line for an `ar` user; never a check-in number, never the email), every active goal without a session, the wrong language saved with a warning, the daily limit (the eleventh is refused and nothing is sent; a struggle at 00:30 yesterday does not count; per user; two at once at the limit give `201` and `429`), onboarding not complete, ten bad bodies, and `401`.
+And the rest: what the model is told (the goal and why, the step and task, the past struggle and whether the person continued, the last days; the Arabic line for an `ar` user; never a check-in number, never the email), every active goal without a session, the wrong language saved with a warning, the daily limit (the eleventh call of any kind is refused and nothing is sent; a call at 00:30 yesterday does not count; per user; two at once at the limit give `201` and `429`), onboarding not complete, ten bad bodies, and `401`.
 
 ---
 
@@ -356,3 +358,81 @@ Try it in Swagger UI (<http://localhost:3001/api/docs>, with `pnpm dev` running 
     ```
 
     Only the rows from steps 2, 5, 6 and 8. Nothing the refused calls tried was saved.
+
+---
+
+## Step 7 — Let the model suggest the steps of a task
+
+### Why
+
+Cutting a task into small steps is where people stall before any session starts: the task is clear, the first step is not. The app already knows the goal, its why and the task, and since this week it knows how to ask a model. `POST /api/tasks/:id/breakdown` asks for three to seven step titles and returns them. It saves nothing: the person accepts or edits them on the screen, which creates the ones they keep with the normal route. The person stays the author of their plan.
+
+### What we built
+
+| File | Layer | Purpose |
+|---|---|---|
+| `migrations/0012_ai-calls.sql` | Database | `ai_calls`: one row per model call that answered, for the daily limit |
+| `src/ai/ai-usage.repository.ts`, `src/ai/ai-usage.service.ts` | Rule | The limit, shared by struggles and breakdowns |
+| `src/ai/ai.service.ts` | Service | `ask(prompt, parse)`: one call, any shape; `advise` is one use of it |
+| `src/common/language.ts` | Rule | `localeOfText`: the language of a title |
+| `src/breakdown/breakdown-prompt.ts` | Rule | The rules for cutting a task, the goal, the task, the steps so far |
+| `src/breakdown/breakdown-reply.ts` | Boundary | `parseBreakdown`: three to seven titles that fit a step's own rule |
+| `src/breakdown/breakdown.service.ts`, `breakdown.controller.ts`, `breakdown.module.ts` | Service, Controller, Module | `POST /api/tasks/:id/breakdown` |
+| `src/breakdown/dto/breakdown.dto.ts` | Boundary | `{ steps: string[] }` |
+| `test/breakdown.e2e-spec.ts` | Test | 15 tests |
+| `test/schema.e2e-spec.ts` | Test | The new table and its check |
+
+### How it works
+
+**The route**
+
+```
+POST /api/tasks/:id/breakdown
+```
+
+answers `200`:
+
+```
+{ "steps": [ "Read the SELECT chapter of the tutorial",
+             "Write five SELECT queries on the orders table",
+             "Add a WHERE and an ORDER BY to each of them" ] }
+```
+
+| Problem | Status | Code |
+|---|---|---|
+| An id that is not a UUID | `400` | `bad_request` |
+| No such task, or someone else's | `404` | `task.not_found` |
+| The goal is archived | `409` | `goal.archived` |
+| Today's limit is reached | `429` | `ai.daily_limit` |
+| The model could not answer, or not with three to seven titles | `503` | `ai.unavailable` |
+
+**1. The questions, in order:** is the task yours (404), is its goal active (409: an archived goal is read-only, and no step could be added anyway, so the model call would be wasted), is today's limit reached (429, nothing sent). No transaction and no lock: nothing is written under the goal.
+
+**2. One limit for every model call** (`src/ai/ai-usage.service.ts`). A struggle is stored, so it could be counted from its own table; a breakdown is returned and not saved, so it could not. Decided with the user on 2026-10-19: one small table, `ai_calls` (user, kind, time), written for both, in the same transaction as whatever the answer is saved with. The limit is checked before the model is asked and again under the user's row lock when the call is written. A failed call is not counted; the person may try again. Step 4's limit moved onto the same table.
+
+**3. What the model is told:** the rules for cutting a task (three to seven steps, each one sitting of 25 to 50 minutes with a clear end, a title of one line starting with a verb, no numbering, continue after the existing steps), the goal with its why, the task, the steps it already has with their done marks. No profile: this is planning, not advice about the person.
+
+**4. The steps follow the language of the task title**, since they sit next to the person's own words, and the account's language when the title does not say. Any Arabic letter makes the title Arabic: English writers never type Arabic script, while Arabic writers keep a Latin product name ("تعلم PostgreSQL"). As with the advice, the language line comes first and again last.
+
+**5. The reply is checked step by step** (`parseBreakdown`): a list of strings, each trimmed, not blank, within a step title's 200 characters, repeats dropped, then three to seven of them. The screen can create the steps as they are.
+
+**6. `AiService.ask`.** The advice needed `parseAdvice`; the breakdown needs `parseBreakdown`. The service now takes the parser as an argument, and `advise` is one use of it. Same logging, same 503.
+
+**7. The tests** (`test/breakdown.e2e-spec.ts`): the suggestions come back in order and no step is created; the model is told the goal, the task and the existing step; an Arabic title gets the Arabic line; another user's task and an unknown id answer the same 404; an archived goal is 409 with nothing sent; the limit counts every kind and two at once at the limit give `200` and `429`; a model failure or a reply with two, eight, blank or too long steps is 503 and counts nothing; a malformed id; `401`.
+
+### Check it
+
+```bash
+pnpm migrate up
+pnpm test:e2e
+```
+
+`0012_ai-calls` is applied, and the suite passes.
+
+In Swagger UI (<http://localhost:3001/api/docs>, `pnpm dev` running):
+
+1. **GET /goals/{goalId}/tasks** → copy a task's `id`.
+2. **POST /tasks/{id}/breakdown** → `200` after a few seconds with three to seven titles in the task's language. **GET /tasks/{taskId}/steps** → unchanged: nothing was created.
+3. **POST /tasks/{taskId}/steps** with one of the titles → `201`. **POST /tasks/{id}/breakdown** again → the suggestions continue after the step you added.
+4. **POST /goals/{id}/archive**, then **POST /tasks/{id}/breakdown** → `409` with `"code": "goal.archived"`. Unarchive.
+5. In pgAdmin: `SELECT kind, created_at FROM ai_calls ORDER BY created_at;` → one `breakdown` row per answer, and one `struggle` row per struggle from step 6's walk. The refused calls left nothing.

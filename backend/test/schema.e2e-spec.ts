@@ -81,7 +81,7 @@ describe('Database schema', () => {
     await app.close();
   });
 
-  it('has the 15 tables from SCHEMA.md', async () => {
+  it('has the 16 tables from SCHEMA.md', async () => {
     const { rows } = await pool.query<{ tablename: string }>(
       `SELECT tablename FROM pg_tables
         WHERE schemaname = 'public' AND tablename <> 'pgmigrations'
@@ -89,6 +89,7 @@ describe('Database schema', () => {
     );
 
     expect(rows.map((row) => row.tablename)).toEqual([
+      'ai_calls',
       'auth_sessions',
       'goals',
       'profile_achievements',
@@ -105,6 +106,16 @@ describe('Database schema', () => {
       'tasks',
       'users',
     ]);
+  });
+
+  it('rejects an AI call of an unknown kind', async () => {
+    const userId = await insertUser('ai@example.com');
+
+    await expect(
+      pool.query("INSERT INTO ai_calls (user_id, kind) VALUES ($1, 'quiz')", [
+        userId,
+      ]),
+    ).rejects.toThrow('ai_calls_kind_check');
   });
 
   it('rejects an onboarding option outside its list', async () => {

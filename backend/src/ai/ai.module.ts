@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import Groq from 'groq-sdk';
 import { AiProviderName, AppConfig } from '../config/app-config.js';
 import { AI_PROVIDER, AiProvider } from './ai-provider.js';
+import { AiUsageRepository } from './ai-usage.repository.js';
+import { AiUsageService } from './ai-usage.service.js';
 import { AiService } from './ai.service.js';
 import { OpenAiCompatibleProvider } from './compatible.provider.js';
 import { GroqProvider } from './groq.provider.js';
@@ -89,7 +91,10 @@ const PROVIDERS: Record<AiProviderName, (config: AppConfig) => AiProvider> = {
       inject: [AppConfig],
     },
     AiService,
+    AiUsageRepository,
+    AiUsageService,
   ],
-  exports: [AiService],
+  // AiUsageService: the daily limit, for every feature that calls the model.
+  exports: [AiService, AiUsageService],
 })
 export class AiModule {}

@@ -26,7 +26,7 @@ A step is finished only when its **Check it** part passes.
 | 3 | [Profile, onboarding, goals and tasks](week-03-profile-goals-tasks.md) | Profile · Onboarding: the database · Onboarding: screens 1–6 · Onboarding: screen 7, values · Onboarding: direction, completion and status · Goals · The direction moves onto goals · Every error carries a code · Validation errors name the field and the rule · The user's language on the account · Tasks |
 | 4 | [Steps](week-04-steps.md) | Steps · Reorder steps |
 | 5 | [Sessions and progress](week-05-sessions-progress.md) | Start a session · End a session with its review · Stop the clock, review later · Progress per day · Session history |
-| 6 | [The "I'm struggling" button](week-06-struggles.md) | The model's settings · The AI boundary and the fake · The prompt · Ask for advice · Did you continue? · Testing against the real model |
+| 6 | [The "I'm struggling" button](week-06-struggles.md) | The model's settings · The AI boundary and the fake · The prompt · Ask for advice · Did you continue? · Testing against the real model · Let the model suggest the steps of a task |
 
 Weeks 7–12 are added here as we build them.
 
