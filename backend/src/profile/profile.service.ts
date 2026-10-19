@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ApiError } from '../common/api-error.js';
+import { ApiError, ApiErrorCode } from '../common/api-error.js';
 import { DatabaseService } from '../database/database.service.js';
 import { OnboardingStatus } from './dto/onboarding-status.dto.js';
 import { Profile } from './dto/profile.dto.js';
@@ -48,5 +48,23 @@ export class ProfileService {
     if (missing.length > 0) {
       throw new ApiError('goal.onboarding_required', { missing });
     }
+  }
+
+  /**
+   * The whole profile, for a write that needs it: the advice behind
+   * "I'm struggling" is built from these answers. Until the six required
+   * screens are saved, the write is refused with `code` and the screens
+   * still missing, like POST /goals. One read answers both "complete?" and
+   * "what is in it?".
+   */
+  async requireComplete(userId: string, code: ApiErrorCode): Promise<Profile> {
+    const profile = await this.sections.findAll(userId);
+    const missing = REQUIRED_SCREENS.filter(
+      (screen) => profile[screen] === null,
+    );
+    if (missing.length > 0) {
+      throw new ApiError(code, { missing });
+    }
+    return profile;
   }
 }

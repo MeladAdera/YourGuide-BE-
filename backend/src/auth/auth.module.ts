@@ -28,5 +28,7 @@ import { UsersRepository } from './users.repository.js';
     // AuthSessionsRepository, which lives in this module.
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
+  // Exported for StrugglesModule: the advice is written in `users.locale`.
+  exports: [UsersRepository],
 })
 export class AuthModule {}

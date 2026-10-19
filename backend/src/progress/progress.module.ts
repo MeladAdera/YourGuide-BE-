@@ -8,5 +8,7 @@ import { ProgressService } from './progress.service.js';
 @Module({
   controllers: [ProgressController],
   providers: [ProgressService, ProgressRepository],
+  // Exported for StrugglesModule: the last 7 days go into every prompt.
+  exports: [ProgressRepository],
 })
 export class ProgressModule {}

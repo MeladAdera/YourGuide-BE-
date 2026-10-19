@@ -94,6 +94,22 @@ export const API_ERRORS = {
   // A body or a query refused by a DTO. The answer carries the sentences
   // of the broken rules as `message`, and the rules themselves, by field,
   // as `errors` (see validation-errors.ts).
+  'struggle.onboarding_required': {
+    status: HttpStatus.CONFLICT,
+    message: 'Finish these screens first.',
+  },
+  'struggle.not_found': {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Struggle not found.',
+  },
+  'struggle.already_answered': {
+    status: HttpStatus.CONFLICT,
+    message: 'You already said whether you continued.',
+  },
+  'ai.daily_limit': {
+    status: HttpStatus.TOO_MANY_REQUESTS,
+    message: "Today's advice is used up. It comes back tomorrow.",
+  },
   'ai.unavailable': {
     status: HttpStatus.SERVICE_UNAVAILABLE,
     message: 'Advice is not available right now. Try again in a minute.',

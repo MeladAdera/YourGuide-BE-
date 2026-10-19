@@ -7,6 +7,7 @@ import { HealthModule } from './health/health.module.js';
 import { ProfileModule } from './profile/profile.module.js';
 import { ProgressModule } from './progress/progress.module.js';
 import { SessionsModule } from './sessions/sessions.module.js';
+import { StrugglesModule } from './struggles/struggles.module.js';
 import { StepsModule } from './steps/steps.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
 
@@ -22,6 +23,7 @@ import { TasksModule } from './tasks/tasks.module.js';
     StepsModule,
     SessionsModule,
     ProgressModule,
+    StrugglesModule,
   ],
 })
 export class AppModule {}

@@ -12,5 +12,8 @@ import { SessionsService } from './sessions.service.js';
   imports: [GoalsModule, StepsModule],
   controllers: [SessionsController],
   providers: [SessionsService, SessionsRepository],
+  // Exported for StrugglesModule: a struggle is linked to the session that
+  // is open when the button is pressed.
+  exports: [SessionsRepository],
 })
 export class SessionsModule {}

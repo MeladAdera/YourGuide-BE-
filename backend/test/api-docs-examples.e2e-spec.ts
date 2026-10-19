@@ -222,6 +222,8 @@ describe('API docs examples', () => {
         '/api/sessions',
         '/api/sessions/{id}/end',
         '/api/steps/{id}',
+        '/api/struggles',
+        '/api/struggles/{id}',
       ]),
     );
   });
