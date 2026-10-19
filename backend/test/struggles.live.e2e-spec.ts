@@ -38,6 +38,7 @@ const ARABIC =
 
 describe.skipIf(!LIVE)('struggles against the real model', () => {
   let app: INestApplication<App>;
+  let lastTaskId = '';
 
   async function register(email: string, locale: 'en' | 'ar'): Promise<string> {
     const response = await request(app.getHttpServer())
@@ -61,6 +62,7 @@ describe.skipIf(!LIVE)('struggles against the real model', () => {
       .post(`/api/goals/${(goal.body as { id: string }).id}/tasks`)
       .set('Cookie', cookie)
       .send({ title: 'Learn PostgreSQL' });
+    lastTaskId = (task.body as { id: string }).id;
     const step = await request(app.getHttpServer())
       .post(`/api/tasks/${(task.body as { id: string }).id}/steps`)
       .set('Cookie', cookie)
@@ -123,6 +125,22 @@ describe.skipIf(!LIVE)('struggles against the real model', () => {
     },
     120_000,
   );
+
+  it('suggests the steps of a task', async () => {
+    const cookie = await register('live-breakdown@example.com', 'en');
+    const startedAt = Date.now();
+
+    const response = await request(app.getHttpServer())
+      .post(`/api/tasks/${lastTaskId}/breakdown`)
+      .set('Cookie', cookie);
+
+    const body = response.body as { steps: string[] };
+    console.log(
+      `\n[breakdown] ${String(response.status)} in ${String(Date.now() - startedAt)} ms\n  ${body.steps.join('\n  ')}`,
+    );
+    expect(response.status).toBe(200);
+    expect(body.steps.length).toBeGreaterThanOrEqual(3);
+  }, 120_000);
 
   it('answers an Arabic user in Arabic', async () => {
     const cookie = await register('live-ar@example.com', 'ar');
