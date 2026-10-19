@@ -27,3 +27,16 @@ export function languageLine(locale: Locale): string {
   }
   return 'Write both fields in English.';
 }
+
+/**
+ * The same instruction once more, as the last line the model reads. Tried
+ * against GLM-4.7-Flash on 2026-10-19: with an English prompt, a rule in
+ * the system message asking for Arabic was ignored, even written in Arabic;
+ * the same rule as the final line of the user message was followed. Models
+ * weigh what comes last. English users get the line too, so an Arabic
+ * description never switches the answer's language.
+ */
+export function closingLanguageLine(locale: Locale): string {
+  const language = locale === 'ar' ? 'Arabic' : 'English';
+  return `Language: write both "advice" and "nextStep" in ${language}, whatever language the text above is in.`;
+}

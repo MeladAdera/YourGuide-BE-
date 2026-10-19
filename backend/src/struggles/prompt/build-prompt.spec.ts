@@ -185,6 +185,9 @@ describe('buildPrompt', () => {
     expect(system).toContain('Write both fields in Arabic.');
     expect(system).toContain('man or a woman');
     expect(system).not.toContain('Write both fields in English.');
+    expect(buildPrompt(context({ locale: 'ar' })).user.trimEnd()).toMatch(
+      /Language: write both "advice" and "nextStep" in Arabic, whatever language the text above is in\.$/,
+    );
   });
 
   it('orders the user message from the person to the struggle, which comes last', () => {
@@ -201,7 +204,9 @@ describe('buildPrompt', () => {
     const positions = headings.map((h) => user.indexOf(h));
     expect(positions.every((p) => p >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-    expect(user.trimEnd()).toMatch(/still cannot write one\.$/);
+    expect(user.trimEnd()).toMatch(
+      /still cannot write one\.\n\nLanguage: write both "advice" and "nextStep" in English, whatever language the text above is in\.$/,
+    );
   });
 
   it('with a session, shows its goal in full and what is being worked on', () => {

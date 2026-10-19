@@ -1,4 +1,4 @@
-/* global process, console, fetch, AbortSignal */
+/* global process, console, fetch, AbortSignal, setTimeout */
 // One real call to the active provider per language, with the request the
 // app sends. Run from backend/ with `pnpm ai:check`. Reads AI_PROVIDER, the
 // provider's key, AI_BASE_URL and AI_MODEL from .env; prints the answers,
@@ -60,6 +60,8 @@ if ('baseUrl' in provider && baseUrl === '') {
   process.exit(1);
 }
 const timeoutMs = 20_000;
+/** As in the app's OpenAI-style adapter: a 429, a 5xx or a failed connection is tried again. */
+const RETRY = { attempts: 3, baseDelayMs: 1000 };
 
 const schema = {
   type: 'object',
@@ -71,58 +73,86 @@ const languages = {
   en: 'Write both fields in English.',
   ar: 'Write both fields in Arabic, without assuming whether the reader is a man or a woman.',
 };
-const user =
+// The same instruction once more, as the last line the model reads: GLM
+// ignores a system-only rule when the text is English (tried 2026-10-19).
+const closing = {
+  en: 'Language: write both "advice" and "nextStep" in English, whatever language the text above is in.',
+  ar: 'Language: write both "advice" and "nextStep" in Arabic, whatever language the text above is in.',
+};
+const struggle =
   'I have read about SQL JOIN three times and still cannot write one. I am stuck.';
 const system = (languageLine) =>
   `You are a kind study companion. Answer with a JSON object with exactly two string fields: "advice" (two sentences) and "nextStep" (one action doable in minutes). ${languageLine}`;
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** Each call answers { text, model, finish, promptTokens, completionTokens }. */
 const calls = {
-  zai: (languageLine) => calls.compatible(languageLine),
-  async compatible(languageLine) {
+  zai: (languageLine, user) => calls.compatible(languageLine, user),
+  async compatible(languageLine, user) {
     const headers = {
       'content-type': 'application/json',
       accept: 'application/json',
     };
     if (apiKey !== null) headers.authorization = `Bearer ${apiKey}`;
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: system(languageLine) },
-          { role: 'user', content: user },
-        ],
-        response_format: { type: 'json_object' },
-        max_tokens: 2048,
-        temperature: 0.7,
-        stream: false,
-        ...(provider.extraBody ?? {}),
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
+    const body = JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: system(languageLine) },
+        { role: 'user', content: user },
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 2048,
+      temperature: 0.7,
+      stream: false,
+      ...(provider.extraBody ?? {}),
     });
-    if (!response.ok) {
-      const error = new Error((await response.text()).slice(0, 300));
-      error.status = response.status;
-      throw error;
+    for (let attempt = 1; ; attempt++) {
+      let response;
+      try {
+        response = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (error) {
+        if (!(error instanceof TypeError) || attempt >= RETRY.attempts)
+          throw error;
+        console.log(`  (connection failed, attempt ${attempt}; trying again)`);
+        await sleep(RETRY.baseDelayMs * 2 ** (attempt - 1));
+        continue;
+      }
+      if (!response.ok) {
+        const retryable = response.status === 429 || response.status >= 500;
+        if (retryable && attempt < RETRY.attempts) {
+          console.log(
+            `  (HTTP ${response.status}, attempt ${attempt}; trying again)`,
+          );
+          await sleep(RETRY.baseDelayMs * 2 ** (attempt - 1));
+          continue;
+        }
+        const error = new Error((await response.text()).slice(0, 300));
+        error.status = response.status;
+        throw error;
+      }
+      const json = await response.json();
+      const choice = json.choices?.[0] ?? {};
+      const content = choice.message?.content;
+      const text = typeof content === 'string' ? content : '';
+      return {
+        text: text
+          .trim()
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/, ''),
+        model: json.model ?? model,
+        finish: choice.finish_reason,
+        promptTokens: json.usage?.prompt_tokens,
+        completionTokens: json.usage?.completion_tokens,
+      };
     }
-    const json = await response.json();
-    const choice = json.choices?.[0] ?? {};
-    const content = choice.message?.content;
-    const text = typeof content === 'string' ? content : '';
-    return {
-      text: text
-        .trim()
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/\s*```$/, ''),
-      model: json.model ?? model,
-      finish: choice.finish_reason,
-      promptTokens: json.usage?.prompt_tokens,
-      completionTokens: json.usage?.completion_tokens,
-    };
   },
-  async mistral(languageLine) {
+  async mistral(languageLine, user) {
     const client = new Mistral({ apiKey, timeoutMs });
     const response = await client.chat.complete({
       model,
@@ -155,7 +185,7 @@ const calls = {
       completionTokens: response.usage?.completionTokens,
     };
   },
-  async groq(languageLine) {
+  async groq(languageLine, user) {
     const client = new Groq({ apiKey, maxRetries: 0, timeout: timeoutMs });
     const response = await client.chat.completions.create({
       model,
@@ -188,9 +218,10 @@ console.log(
 );
 let failed = false;
 for (const [locale, languageLine] of Object.entries(languages)) {
+  const user = `${struggle}\n\n${closing[locale]}`;
   const startedAt = Date.now();
   try {
-    const answer = await calls[providerName](languageLine);
+    const answer = await calls[providerName](languageLine, user);
     console.log(`\n[${locale}] OK in ${Date.now() - startedAt} ms`);
     console.log(
       `  model=${answer.model} finish=${answer.finish} promptTokens=${answer.promptTokens} completionTokens=${answer.completionTokens}`,
@@ -215,7 +246,7 @@ for (const [locale, languageLine] of Object.entries(languages)) {
       );
     } else if (status === 429) {
       console.log(
-        "  429 is the plan's rate or concurrency limit. Wait a minute and try again.",
+        "  429 is the plan's rate or concurrency limit, still there after the retries.",
       );
     }
   }

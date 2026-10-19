@@ -12,23 +12,33 @@ export interface CompatibleOptions {
   /** Null for an endpoint that needs none, such as a local model. */
   apiKey: string | null;
   model: string;
-  /** The hard ceiling for one call. */
+  /** The hard ceiling for one call, retries included. */
   timeoutMs: number;
   /** Provider-specific fields merged into the request body, e.g. Z.ai's `thinking`. */
   extraBody?: Record<string, unknown>;
+  /**
+   * How a 429, a 5xx or a failed connection is retried: `attempts` requests
+   * at most, with a pause that starts at `baseDelayMs` and doubles. Free
+   * tiers share capacity, and "overloaded, try again" a second later is the
+   * normal case, not the rare one.
+   */
+  retry?: { attempts: number; baseDelayMs: number };
 }
 
 /** `fetch`, as this adapter uses it. The unit test passes a stub. */
 export type FetchLike = (
   url: string,
   init: RequestInit,
-) => Promise<Pick<Response, 'ok' | 'status' | 'json'>>;
+) => Promise<Pick<Response, 'ok' | 'status' | 'headers' | 'json'>>;
 
 /**
  * Room for the answer. Arabic takes more tokens per character than English.
  * Too small, and the model stops with `finish_reason: "length"`: a 503.
  */
 const MAX_TOKENS = 2048;
+const DEFAULT_RETRY = { attempts: 3, baseDelayMs: 500 };
+/** A `retry-after` longer than this is not waited for: the deadline would pass anyway. */
+const MAX_RETRY_DELAY_MS = 5_000;
 
 /**
  * Any provider that speaks the OpenAI-style chat API: Z.ai, a local or cloud
@@ -46,27 +56,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
   async complete(prompt: Prompt): Promise<Completion> {
     let reply: Reply;
     try {
-      reply = await withDeadline(this.options.timeoutMs, async (signal) => {
-        const response = await this.fetchImpl(
-          `${this.options.baseUrl}/chat/completions`,
-          {
-            method: 'POST',
-            headers: this.headers(),
-            body: JSON.stringify(this.body(prompt)),
-            signal,
-          },
-        );
-        if (!response.ok) {
-          throw new AiUnavailableError(`HTTP ${String(response.status)}`);
-        }
-        let json: unknown;
-        try {
-          json = await response.json();
-        } catch {
-          throw new AiUnavailableError('not JSON');
-        }
-        return readReply(json);
-      });
+      reply = await withDeadline(this.options.timeoutMs, (signal) =>
+        this.ask(prompt, signal),
+      );
     } catch (error) {
       throw unavailable(error);
     }
@@ -83,6 +75,46 @@ export class OpenAiCompatibleProvider implements AiProvider {
       model: reply.model ?? this.options.model,
       usage: reply.usage,
     };
+  }
+
+  /** The request, retried on a 429, a 5xx or a failed connection while attempts and time remain. */
+  private async ask(prompt: Prompt, signal: AbortSignal): Promise<Reply> {
+    const retry = this.options.retry ?? DEFAULT_RETRY;
+    const body = JSON.stringify(this.body(prompt));
+    for (let attempt = 1; ; attempt++) {
+      let response: Awaited<ReturnType<FetchLike>>;
+      try {
+        response = await this.fetchImpl(
+          `${this.options.baseUrl}/chat/completions`,
+          { method: 'POST', headers: this.headers(), body, signal },
+        );
+      } catch (error) {
+        // A connection that never opened (fetch's TypeError) is retried like
+        // a 5xx: a flaky route is the normal case on a VPN, not the rare one.
+        if (!(error instanceof TypeError) || attempt >= retry.attempts) {
+          throw error;
+        }
+        await pause(retry.baseDelayMs * 2 ** (attempt - 1), signal);
+        continue;
+      }
+      if (response.ok) {
+        let json: unknown;
+        try {
+          json = await response.json();
+        } catch {
+          throw new AiUnavailableError('not JSON');
+        }
+        return readReply(json);
+      }
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt >= retry.attempts) {
+        throw new AiUnavailableError(`HTTP ${String(response.status)}`);
+      }
+      await pause(
+        retryDelay(response.headers, retry.baseDelayMs * 2 ** (attempt - 1)),
+        signal,
+      );
+    }
   }
 
   private headers(): Record<string, string> {
@@ -110,6 +142,34 @@ export class OpenAiCompatibleProvider implements AiProvider {
       ...this.options.extraBody,
     };
   }
+}
+
+/** The server's `retry-after` in seconds when it gives one and it is short; else the backoff. */
+function retryDelay(headers: Headers, backoffMs: number): number {
+  const seconds = Number(headers.get('retry-after'));
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
+  }
+  return Math.min(backoffMs, MAX_RETRY_DELAY_MS);
+}
+
+/** Waits, unless the deadline fires first. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new AiUnavailableError('Timeout'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    function onAbort(): void {
+      clearTimeout(timer);
+      reject(new AiUnavailableError('Timeout'));
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 interface Reply {

@@ -27,10 +27,12 @@ function reply(
 function json(
   body: unknown,
   status = 200,
-): Pick<Response, 'ok' | 'status' | 'json'> {
+  headers: Record<string, string> = {},
+): Pick<Response, 'ok' | 'status' | 'headers' | 'json'> {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: new Headers(headers),
     json: () => Promise.resolve(body),
   };
 }
@@ -50,6 +52,7 @@ function provider(
         model: 'glm-4.7-flash',
         timeoutMs: 1000,
         extraBody: { thinking: { type: 'disabled' } },
+        retry: { attempts: 3, baseDelayMs: 1 },
         ...options,
       },
       mock,
@@ -151,6 +154,7 @@ describe('OpenAiCompatibleProvider', () => {
       {
         ok: true,
         status: 200,
+        headers: new Headers(),
         json: () => Promise.reject(new SyntaxError('bad')),
       },
       'not JSON',
@@ -173,14 +177,71 @@ describe('OpenAiCompatibleProvider', () => {
     await expect(compatible.complete(PROMPT)).rejects.toThrow(reason);
   });
 
-  it('is unavailable when the network fails, named as a connection error', async () => {
-    const { provider: compatible } = provider(() =>
+  it('retries a 429 and a 5xx, then answers', async () => {
+    const answers = [
+      json({ error: { code: '1305' } }, 429),
+      json({}, 503, { 'retry-after': '0' }),
+      json(reply()),
+    ];
+    const { provider: compatible, fetch } = provider(() =>
+      Promise.resolve(answers.shift() ?? json(reply())),
+    );
+
+    await expect(compatible.complete(PROMPT)).resolves.toMatchObject({
+      text: ANSWER,
+    });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up after the allowed attempts, and never retries a 4xx other than 429', async () => {
+    const busy = provider(() =>
+      Promise.resolve(json({ error: { code: '1305' } }, 429)),
+    );
+    await expect(busy.provider.complete(PROMPT)).rejects.toThrow('HTTP 429');
+    expect(busy.fetch).toHaveBeenCalledTimes(3);
+
+    const wrongKey = provider(() => Promise.resolve(json({}, 401)));
+    await expect(wrongKey.provider.complete(PROMPT)).rejects.toThrow(
+      'HTTP 401',
+    );
+    expect(wrongKey.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops retrying when the deadline falls during the pause', async () => {
+    const { provider: compatible, fetch } = provider(
+      () => Promise.resolve(json({}, 429, { 'retry-after': '2' })),
+      { timeoutMs: 30 },
+    );
+
+    await expect(compatible.complete(PROMPT)).rejects.toThrow('Timeout');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a connection that never opened, then answers', async () => {
+    const answers: (() => Promise<unknown>)[] = [
+      () => Promise.reject(new TypeError('fetch failed')),
+      () => Promise.resolve(json(reply())),
+    ];
+    const { provider: compatible, fetch } = provider(
+      () =>
+        (answers.shift() ?? (() => Promise.resolve(json(reply()))))() as never,
+    );
+
+    await expect(compatible.complete(PROMPT)).resolves.toMatchObject({
+      text: ANSWER,
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('is unavailable when the network keeps failing, named as a connection error', async () => {
+    const { provider: compatible, fetch } = provider(() =>
       Promise.reject(new TypeError('fetch failed')),
     );
 
     await expect(compatible.complete(PROMPT)).rejects.toThrow(
       'ConnectionError',
     );
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it('gives up at the deadline even while the endpoint is still silent', async () => {

@@ -6,7 +6,7 @@ import type { ProgressDay } from '../../progress/dto/progress.dto.js';
 import type { Session } from '../../sessions/dto/session.dto.js';
 import type { Situation } from '../situation.js';
 import { clip, LONG_CLIP, profileDigest, SHORT_CLIP } from './digest.js';
-import { languageLine, RULES } from './rules.js';
+import { closingLanguageLine, languageLine, RULES } from './rules.js';
 import { SITUATION_GUIDANCE, SITUATION_LABELS } from './situations.js';
 
 /** A past struggle as the prompt needs it: what happened and what came of it. */
@@ -50,8 +50,8 @@ export const USER_MESSAGE_BUDGET = 16_000;
  * The prompt for one struggle. The system message is the rules, the
  * language, and the guidance for this situation. The user message is the
  * person's data in a fixed order, from who they are to what is happening
- * now; the description comes last, so the model reads it with everything
- * else already in mind.
+ * now; the description comes last but one, so the model reads it with
+ * everything else already in mind, and the language line closes the message.
  */
 export function buildPrompt(context: PromptContext): Prompt {
   const system = [
@@ -80,6 +80,7 @@ function userMessage(
     `## Last ${String(context.progress.length)} days (oldest first, today last)\n${progressLines(context.progress)}`,
     `## Past struggles (newest first)\n${pastStrugglesLines(pastStruggles)}`,
     `## Now\nSituation: ${SITUATION_LABELS[context.situation]}\nIn their words: ${clip(context.description, LONG_CLIP * 2)}`,
+    closingLanguageLine(context.locale),
   ].join('\n\n');
 }
 
