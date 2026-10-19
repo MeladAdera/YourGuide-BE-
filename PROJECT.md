@@ -42,7 +42,7 @@ An app that plays that missing role:
 | Database | PostgreSQL, raw SQL with `pg` (no ORM) |
 | Migrations | `node-pg-migrate` with plain SQL |
 | Validation | `class-validator` DTOs + global `ValidationPipe` |
-| AI | Anthropic SDK, called from backend only |
+| AI | A language model behind one `AiProvider` interface, called from the backend only. Z.ai's free GLM Flash models by default; Mistral, Groq and any OpenAI-style endpoint are wired too (`AI_PROVIDER`) |
 | Auth | Email + password (argon2 hash), server-side sessions in Postgres, httpOnly cookie |
 | Charts | Recharts |
 | Repo | One git repo, two independent projects: `backend/` and `frontend/` (each with its own `package.json`, no shared package) |
@@ -57,7 +57,7 @@ Browser
    ▼
 Next.js (frontend)  ── rewrites /api/* ──►  NestJS (backend)  ──►  PostgreSQL
                                                    │
-                                                   └──►  Anthropic API
+                                                   └──►  AI provider (Z.ai)
 ```
 
 - Next.js rewrites `/api/*` to the NestJS server. The browser sees **one origin**, so there is no CORS and the auth cookie works simply.
@@ -102,7 +102,7 @@ src/
 ├── sessions/
 ├── struggles/
 ├── progress/
-└── ai/            # all Anthropic calls
+└── ai/            # all calls to the language model
 ```
 
 ## 5. Core Flow
@@ -188,6 +188,8 @@ Available anytime, especially during a session.
    - **one small next step**
 5. After, I mark: did I continue? (`continued` / `stopped`)
 
+Built in week 6 (`docs/week-06-struggles.md`): the server attaches the session that is open when the button is pressed; the advice comes back in `users.locale`; a model that cannot answer is a 503 and nothing is saved, so a struggle always has its advice; one person may send `AI_DAILY_LIMIT` struggles a day (10); the answer to "did I continue?" is written once. The prompt carries a digest of the whole profile, the goal with its why, the step and task being worked on, the last 7 days and the last 5 struggles, with guidance per situation written from the book principles (`backend/src/struggles/prompt/`).
+
 ### 6.7 Progress
 - Focus minutes per day
 - Steps completed per day
@@ -229,8 +231,8 @@ The full schema, its rules, and the reasons behind them live in **`SCHEMA.md`**.
 | POST | `/api/sessions` | Start session (`stepId`). 409 if the goal is archived, the step is done, or a session is still active |
 | POST | `/api/sessions/:id/stop` | Stop the clock without a review ("Later"). The session stays active until it is reviewed. 404 if it is not running |
 | POST | `/api/sessions/:id/end` | End a running or stopped session with its review: `outcome`, `rating`, optional `note`. `done` marks the step done as of the end time. 404 if it is not active, or not yours |
-| POST | `/api/struggles` | Describe struggle → AI advice |
-| PATCH | `/api/struggles/:id` | Mark continued / stopped |
+| POST | `/api/struggles` | "I'm struggling": `situation` and `description` → the struggle with its `advice` and `nextStep`, in the user's language, linked to the open session if any. 409 until onboarding is complete, 429 past the daily limit, 503 when the model cannot answer (nothing saved) |
+| PATCH | `/api/struggles/:id` | Did you continue? `continued: true|false`, written once (409 after). This is what progress counts as "struggled and continued" |
 | GET | `/api/progress?days=7` | Per day in the user's timezone, oldest first, today last: focus minutes, steps done, times struggled and continued; plus the totals. `days` from 1 to 90 |
 | POST | `/api/tasks/:id/breakdown` | AI suggests steps (phase 6) |
 
@@ -270,8 +272,6 @@ Validated at startup in `config/`. The app **throws and does not start** if one 
 ## 12. Open Questions (decide later)
 
 - Whether users can retake the check-in over time (that would turn `profile_confidence` into a history table).
-- Exact prompt for each struggle situation.
 - Quiz format for evaluation.
-- AI usage limit per user per day (AI calls cost money once other people use it).
 - Password reset and email verification (needs email sending).
 - Hosting (e.g. Vercel for web, Railway/Render for api + Postgres).

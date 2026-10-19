@@ -374,3 +374,65 @@ Four rules the user wrote into `PROJECT.md` §6.3 on 2026-10-10: nothing closes 
 
 **Added the same day: `GET /api/sessions?days=7`, the history.** The walk also showed that reviews and notes could not be read back: progress had the numbers, nothing had what they were made of. The list holds the completed sessions of the last days, newest first, in the shape `POST /sessions/:id/end` answers, so the frontend has one session type for both. *Completed only:* the open session is on `/sessions/active` with its own shape, and a mixed list would carry empty review fields on every item. *The same window as progress*, the same `days` rule, now shared in `src/common/last-days.query.ts`: the list for a week is what the week's bars are made of, minus a session still awaiting its review.
 
+
+## 2026-10-17 — The model sits behind one interface; tests never reach it; a failure is a 503 and no row
+
+Every call to a language model goes through `AiProvider` in `backend/src/ai/` (YOU-25): a prompt in, a completion out. The route is written against the interface, not a vendor, which paid off within two days (next entry). `createTestApp` always replaces the provider with `FakeAi`, which answers in microseconds and records what it was told, so no e2e test and no Swagger example can reach a real provider; the config still requires a key in `.env.test`, a dummy that is never sent, so startup keeps one rule for every environment.
+
+**A failed call is `503 ai.unavailable`, and nothing is saved.** The Linear issues said 502. 503 tells clients and proxies "try again in a moment", which is what the person should do; the frontend translates by code either way. `advice` and `next_step` are NOT NULL since week 1, so the model is asked before the row exists: there is never a struggle without its advice. *Rejected: saving the struggle with empty advice and a way to ask again later.* A migration and a second flow for a case the person can repeat by pressing the button.
+
+**One deadline for the whole call** (`AI_TIMEOUT_MS`), retries included: an `AbortSignal` stops the request in flight and a race stops the wait even while an SDK sleeps between its own retries. 45 s by default: with the real prompt the free model answered in 5–17 s, and one answer in eight took 42; a late answer beats a lost one.
+
+**The reply is a boundary.** `parseAdvice` refuses a reply that is not JSON, lacks a field, is blank, or is longer than the caps (1,200 and 300 characters), like a request body.
+
+**The log holds the model, the time, the tokens and the error class. Never the prompt, never the reply.** Both hold what the person wrote (2026-10-03).
+
+## 2026-10-19 — The provider is Z.ai's free GLM Flash, chosen by what the developer's network and wallet allow
+
+The user cannot pay for AI, now or later, and the developer's real network is in a country that several US providers do not serve. The provider was chosen by measurement, not preference, and the choice is one line of config:
+
+1. **Groq** (built 2026-10-17): the key was valid; Groq answers `403 Forbidden` from the real network and refuses every VPN exit tried. Anthropic, OpenAI and OpenRouter refuse the same network. Unusable.
+2. **Mistral** (2026-10-18): the key was valid and the network served, but the free plan allows zero requests a minute without an activated plan (`x-ratelimit-limit-req-minute: 0`). Unusable without paying; the adapter is kept.
+3. **Z.ai** (2026-10-19): GLM-4.7-Flash and GLM-4.5-Flash are free with no time limit, one or two requests at a time, email sign-up, and answer the real network. **The default.** Google's Gemini does not list the country among those served; Qwen's free quota ends after 90 days; Hugging Face's free credits are $0.10 a month.
+
+**One adapter for every OpenAI-style endpoint** (`compatible.provider.ts`): plain `fetch`, JSON mode, the reply checked field by field, retries on a 429, a 5xx or a failed connection inside the deadline. `AI_PROVIDER=zai` is a preset of it; `AI_PROVIDER=compatible` takes `AI_BASE_URL` and `AI_MODEL` for a local or cloud Ollama, Cloudflare Workers AI, Qwen or DeepSeek. *Rejected: one adapter per provider.* The Mistral and Groq adapters exist because they were written first and may serve a hosted server; nothing new gets its own.
+
+**`glm-4.5-flash` by default.** On the real prompt it answered 8 of 8 in the right language in 5–17 s; `glm-4.7-flash` writes a little better but failed 4 of 8 with "temporarily overloaded" and took 12 s for a one-word answer; `glm-5.3-flash` is paid. `AI_MODEL` switches.
+
+**Training on free-tier prompts is accepted for development only**, with made-up profiles. Before a real person uses the app, the provider or plan must be one that does not train on the data (Z.ai's terms to be read then). Decided with the user on 2026-10-18.
+
+**No way around a provider's location or VPN block is attempted.** A provider that refuses the network is not used.
+
+**Node waits 1.5 s for an address.** Node abandons each address attempt after 250 ms by default; the VPN round trip to Z.ai averaged 270 ms, so three fetches in four failed to connect while `curl` never did. `main.ts` sets `net.setDefaultAutoSelectFamilyAttemptTimeout(1500)`. Not TLS, not IPv6; both were tested and cleared.
+
+## 2026-10-17 — The prompt: a digest of the whole profile, guidance per situation, the language line last
+
+Decided with the user before building (YOU-26). The prompt carries a digest of the **whole profile**, built by code from the saved fields on every call, not only the screens a situation needs as the issue said: the profile has no other consumer, and the user wanted the best fit first and to narrow later if the advice does not improve. Values, strengths and patterns go in whole (clipped at 600 characters); situation and self-view one line each (300); basics as words. *Rejected: an AI-written summary stored on the user.* A second prompt, a new column and a staleness rule, for what one function renders exactly.
+
+**The confidence check-in becomes statements, never numbers.** 4–5 "believes they can…", 3 "is unsure whether…", 1–2 "does not feel they can…"; the three items worded the other way round name a behaviour ("says they compare themselves with others a lot"). No sum, no label: the app never diagnoses, in a prompt either (2026-10-03). Tested: no digit in that line.
+
+**Guidance per situation, as principles.** Stuck: shrink the problem until one piece fits in ten minutes. Tired: the energy left is a real budget; one tiny step, or a clean stop with tomorrow's first step written down. Comparing: the person's own aim and their own last seven days. Negative thought: a thought is not a verdict; the person's own facts set against it. Written from the book principles in our own words, never as titles or quotes.
+
+**Which goal:** with a session open, its goal in full and the step and task by name; without one, every active goal, briefly. **No special rule for a description that mentions danger**: the user chose none (2026-10-17); it is one line in `rules.ts` if that changes.
+
+**The language line closes every message.** Tried on 2026-10-19 against GLM-4.7-Flash: with an English prompt, a system-message rule asking for Arabic was ignored, even written in Arabic; the same rule as the last line of the user message was followed. English users get the line too, so an Arabic description never switches their answer. **The Arabic gender rule stays as it is**: real answers addressed the reader mostly in the masculine singular, the common written convention; judged again after real use (2026-10-19).
+
+**A size budget.** The free tier allows 8,000 tokens a minute on one provider tried and shares capacity on the current one; Arabic takes two to three tokens per word. The user message is kept under 16,000 characters by dropping the oldest past struggles first.
+
+## 2026-10-19 — "I'm struggling": the model is asked before the row exists, and the daily limit is counted twice
+
+`POST /api/struggles` (YOU-27) asks in this order: onboarding complete (409 `struggle.onboarding_required`, with the screens still missing, like `POST /goals`); today's limit (429 `ai.daily_limit`, nothing sent to the model); then the context is read, the model asked, and only then the row written.
+
+**Synchronous.** The call waits for the model and answers the struggle with its advice: one route, one spinner. *Rejected: save first and poll for the advice.* More routes and states, for a wait of a few seconds.
+
+**The model is asked outside the transaction.** A call can take many seconds; a connection held that long for every press would starve the pool of ten. The price is a second count inside the transaction, under `FOR UPDATE` on the user's own row (the same lock goals use): two requests at the limit can both pass the first check; the lock makes them write one after the other, and the second one's count sees the first one's row. The rare race costs one model call and never writes a row past the limit. A unique index cannot count, so this is the index's job done by hand.
+
+**The daily limit is per user, in the user's day, from the `struggles` table** (YOU-29, decided 2026-10-17): `AI_DAILY_LIMIT`, 10 by default. The provider's quota belongs to one key for the whole app; this is the brake we control. Counted with the same "first instant of the local day" expression the progress page uses, so the limit and the chart agree on what "today" is. *Rejected: a counter or an `ai_calls` table.* The rows already say it. The task breakdown (YOU-28) is not stored, so it will need its own count when it comes.
+
+**The server attaches the session.** The issue allowed a `sessionId` in the body. The server reads the open session itself, running or awaiting its review; the body cannot name one (`400`). A tab left open since yesterday would otherwise link today's struggle to yesterday's session.
+
+**"Did you continue?" is written once** (`PATCH /api/struggles/:id`, `continued: boolean`): one `UPDATE … WHERE continued IS NULL`; a second answer is 409 `struggle.already_answered`, someone else's or a missing struggle 404 `struggle.not_found`. A record of what happened, like a session's review; the frontend can confirm before sending. A boolean, not an outcome list: the column is one, progress reads it as one.
+
+**An answer in the wrong language is saved, and logged.** `languageMatches` counts Arabic letters; a mismatch writes one log line with the locale, nothing of the text. An answer in the other language still helps, and the log tells us how often the model slips (decided 2026-10-19). In eight real answers it did not.
+
+**Not built:** a list of past struggles (`GET /api/struggles`), until a screen needs it (decided 2026-10-19); changing an answer; anything the frontend could derive.
