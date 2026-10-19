@@ -4,21 +4,56 @@ const DEFAULT_AI_TIMEOUT_MS = 20_000;
 const MIN_AI_TIMEOUT_MS = 1_000;
 
 /**
- * The language-model providers the backend can talk to. One is active, chosen
- * by AI_PROVIDER; its own key variable is then required. Mistral is the
- * default: it is the one that answers from the developer's network.
+ * The language-model providers the backend can talk to. One is active,
+ * chosen by AI_PROVIDER; its own key variable is then required.
+ *
+ * - `zai`: Z.ai's free GLM-4.7-Flash, through its OpenAI-style API.
+ * - `compatible`: any other OpenAI-style endpoint (a local Ollama, Ollama
+ *   cloud, Cloudflare Workers AI, Qwen, DeepSeek), by AI_BASE_URL.
+ * - `mistral`, `groq`: through their own SDKs.
+ *
+ * Z.ai is the default: free with no time limit, and it answers from the
+ * developer's network.
  */
-export const AI_PROVIDERS = ['mistral', 'groq'] as const;
+export const AI_PROVIDERS = ['zai', 'compatible', 'mistral', 'groq'] as const;
 export type AiProviderName = (typeof AI_PROVIDERS)[number];
 
-const API_KEY_VARIABLE: Record<AiProviderName, string> = {
-  mistral: 'MISTRAL_API_KEY',
-  groq: 'GROQ_API_KEY',
-};
+interface ProviderPreset {
+  /** The variable that holds the key. */
+  keyVariable: string;
+  /** False for an endpoint that needs no key, such as a local model. */
+  keyRequired: boolean;
+  /** The OpenAI-style base URL, when the preset fixes one. */
+  baseUrl: string | null;
+  /** Null when AI_MODEL must be set by hand. */
+  defaultModel: string | null;
+}
 
-const DEFAULT_AI_MODEL: Record<AiProviderName, string> = {
-  mistral: 'mistral-medium-latest',
-  groq: 'openai/gpt-oss-120b',
+const PRESETS: Record<AiProviderName, ProviderPreset> = {
+  zai: {
+    keyVariable: 'ZAI_API_KEY',
+    keyRequired: true,
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    defaultModel: 'glm-4.7-flash',
+  },
+  compatible: {
+    keyVariable: 'AI_API_KEY',
+    keyRequired: false,
+    baseUrl: null,
+    defaultModel: null,
+  },
+  mistral: {
+    keyVariable: 'MISTRAL_API_KEY',
+    keyRequired: true,
+    baseUrl: null,
+    defaultModel: 'mistral-medium-latest',
+  },
+  groq: {
+    keyVariable: 'GROQ_API_KEY',
+    keyRequired: true,
+    baseUrl: null,
+    defaultModel: 'openai/gpt-oss-120b',
+  },
 };
 
 /**
@@ -39,11 +74,17 @@ export class AppConfig {
   /** Which provider writes the AI advice ("I'm struggling"). */
   readonly aiProvider: AiProviderName;
   /**
-   * The active provider's API key (MISTRAL_API_KEY or GROQ_API_KEY). The
-   * advice is requested with it from the backend only: it never reaches
-   * the browser.
+   * The active provider's API key, from its own variable (ZAI_API_KEY,
+   * AI_API_KEY, MISTRAL_API_KEY or GROQ_API_KEY). Null only for a
+   * `compatible` endpoint that needs none. Used from the backend only: it
+   * never reaches the browser.
    */
-  readonly aiApiKey: string;
+  readonly aiApiKey: string | null;
+  /**
+   * The OpenAI-style base URL for `zai` and `compatible`: the one the
+   * preset fixes, or AI_BASE_URL. Null for the SDK providers.
+   */
+  readonly aiBaseUrl: string | null;
   /**
    * The model that writes the advice. The provider checks the id, so a wrong
    * one fails at the first call, not at startup.
@@ -66,8 +107,15 @@ export class AppConfig {
     this.isProduction = env.NODE_ENV === 'production';
     this.trustProxy = parseTrustProxy(env.TRUST_PROXY);
     this.aiProvider = parseAiProvider(env.AI_PROVIDER);
-    this.aiApiKey = required(env, API_KEY_VARIABLE[this.aiProvider]);
-    this.aiModel = optional(env.AI_MODEL) ?? DEFAULT_AI_MODEL[this.aiProvider];
+    const preset = PRESETS[this.aiProvider];
+    this.aiApiKey = preset.keyRequired
+      ? required(env, preset.keyVariable)
+      : (optional(env[preset.keyVariable]) ?? null);
+    this.aiBaseUrl = parseBaseUrl(env.AI_BASE_URL, preset);
+    this.aiModel =
+      optional(env.AI_MODEL) ??
+      preset.defaultModel ??
+      required(env, 'AI_MODEL');
     this.aiDailyLimit = parseWholeNumber(env.AI_DAILY_LIMIT, {
       name: 'AI_DAILY_LIMIT',
       fallback: DEFAULT_AI_DAILY_LIMIT,
@@ -108,6 +156,36 @@ function parseAiProvider(value: string | undefined): AiProviderName {
     );
   }
   return name as AiProviderName;
+}
+
+/**
+ * The base URL for an OpenAI-style endpoint. A preset's URL can be
+ * overridden; `compatible` has none and must be given one. A trailing
+ * slash is dropped, so `/chat/completions` can be appended.
+ */
+function parseBaseUrl(
+  value: string | undefined,
+  preset: ProviderPreset,
+): string | null {
+  const given = optional(value);
+  if (given === undefined) {
+    if (preset.baseUrl !== null) {
+      return preset.baseUrl;
+    }
+    if (preset.keyRequired) {
+      return null; // an SDK provider: no base URL
+    }
+    throw new Error(
+      'Missing required environment variable: AI_BASE_URL. ' +
+        'With AI_PROVIDER=compatible it names the OpenAI-style endpoint, e.g. http://127.0.0.1:11434/v1.',
+    );
+  }
+  if (!/^https?:\/\//.test(given)) {
+    throw new Error(
+      `Invalid environment variable AI_BASE_URL: expected an http(s) URL, got "${given}".`,
+    );
+  }
+  return given.replace(/\/+$/, '');
 }
 
 function parsePort(value: string | undefined): number {

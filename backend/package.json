@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "nest start --watch --env-file .env",
-    "ai:check": "node scripts/groq-check.js",
+    "ai:check": "node scripts/ai-check.js",
     "build": "nest build",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
